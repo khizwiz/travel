@@ -7,8 +7,10 @@ import { getDefaultTrip, recordLocationPoint, getLatestLocation, getPublicLatest
 
 const PUBLIC_POLL_MS = 5 * 60 * 1000;
 const ADMIN_POLL_MS = 2 * 60 * 1000;
-// Don't record fixes worse than this (e.g. desktop WiFi/IP guesses) into the trail.
-const MAX_RECORD_ACCURACY_M = 300;
+// Only record REAL GPS: unknown accuracy or worse than this is never written.
+// (A laptop on a mobile hotspot resolves to the carrier's city-centre address —
+// that once put the truck in downtown Belgrade.)
+const MAX_RECORD_ACCURACY_M = 150;
 
 /**
  * App-wide tracking sync:
@@ -40,12 +42,10 @@ export function useTripTrackingSync() {
     };
   }, [getTrip]);
 
-  // Owner: auto-enable browser geolocation opt-in.
-  useEffect(() => {
-    if (isAdmin && role === "owner" && !geoOptIn) {
-      setGeoOptIn(true);
-    }
-  }, [isAdmin, role, geoOptIn, setGeoOptIn]);
+  // NOTE: tracking is no longer auto-enabled for admins. Every admin device
+  // (including desktops with WiFi/IP-guessed positions) used to opt in
+  // silently and pollute the trail. The driver enables tracking once on the
+  // phone via the Map page; the choice persists.
 
   // Owner: persist each new fix to the DB (min 60s between writes).
   // Skip low-accuracy fixes (desktop WiFi/IP guesses) so a PC logged in as
@@ -53,7 +53,8 @@ export function useTripTrackingSync() {
   useEffect(() => {
     if (!isAdmin || role !== "owner") return;
     if (!liveFix || !tripIdRef.current) return;
-    if (liveFix.accuracyM != null && liveFix.accuracyM > MAX_RECORD_ACCURACY_M) return;
+    // Unknown accuracy = untrusted; only clean GPS fixes enter the trail.
+    if (liveFix.accuracyM == null || liveFix.accuracyM > MAX_RECORD_ACCURACY_M) return;
     const now = Date.now();
     if (now - lastSentRef.current < 60_000) return;
     lastSentRef.current = now;

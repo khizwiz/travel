@@ -34,6 +34,29 @@ export const recordLocationPoint = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// Owner-only: wipe recent trail points (bad fixes, e.g. a laptop's IP-derived
+// city-centre guess). The next real GPS fix repopulates the position.
+export const clearRecentLocationPoints = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ tripId: z.string().uuid(), hours: z.number().min(1).max(168).default(24) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: trip } = await supabase
+      .from("trips").select("owner_id").eq("id", data.tripId).single();
+    if (!trip || trip.owner_id !== userId) throw new Error("Forbidden");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const cutoff = new Date(Date.now() - data.hours * 3600_000).toISOString();
+    const { error, count } = await supabaseAdmin
+      .from("location_points")
+      .delete({ count: "exact" })
+      .eq("trip_id", data.tripId)
+      .gte("ts", cutoff);
+    if (error) throw new Error(error.message);
+    return { deleted: count ?? 0 };
+  });
+
 export const getLatestLocation = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ tripId: z.string().uuid() }).parse(d))

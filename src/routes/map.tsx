@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listPublicDestinationPhotos } from "@/lib/photos.functions";
+import { clearRecentLocationPoints, getDefaultTrip } from "@/lib/tracking.functions";
 
 export const Route = createFileRoute("/map")({
   head: () => ({
@@ -61,6 +62,9 @@ function TrackingPage() {
 
   const live = geo.enabled && liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
   const near = live ? nearestCity(live) : null;
+
+  const fetchTrip = useServerFn(getDefaultTrip);
+  const doClearPoints = useServerFn(clearRecentLocationPoints);
 
   // Story photos with GPS: shown as round thumbnails where they were taken.
   const fetchPhotos = useServerFn(listPublicDestinationPhotos);
@@ -126,6 +130,22 @@ function TrackingPage() {
                   <LocateFixed className="h-3.5 w-3.5" /> Start tracking
                 </button>
               )}
+              <button
+                onClick={async () => {
+                  if (!confirm("Delete the last 24 h of recorded positions? Use this to remove wrong fixes — the next real GPS fix repopulates the map.")) return;
+                  try {
+                    const trip = await fetchTrip();
+                    if (!trip?.id) throw new Error("Trip not found");
+                    const res = await doClearPoints({ data: { tripId: trip.id, hours: 24 } });
+                    alert(`Removed ${res.deleted} recorded position${res.deleted === 1 ? "" : "s"}.`);
+                  } catch (e: any) {
+                    alert(e?.message ?? "Failed to clear positions");
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Clear bad fixes
+              </button>
             </div>
           )}
         </div>
