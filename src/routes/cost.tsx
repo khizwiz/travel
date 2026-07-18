@@ -310,14 +310,6 @@ function OwnerView() {
                 {c.description && <div className="mt-1 text-xs text-muted-foreground">{c.description}</div>}
                 <div className="mt-1 text-[11px] text-muted-foreground">{splitSummary}</div>
                 <div className="mt-2 flex gap-2">
-                  {data.isOwner && (
-                    <button
-                      onClick={() => setEditSplits({ cost: c, splits })}
-                      className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
-                    >
-                      <Edit3 className="h-3 w-3" /> Edit splits
-                    </button>
-                  )}
                   {(data.isOwner || c.created_by === authUser?.id) && (
                     <button
                       onClick={async () => {
@@ -350,21 +342,6 @@ function OwnerView() {
         />
       )}
 
-
-      {editSplits && (
-        <EditSplitsModal
-          cost={editSplits.cost}
-          splits={editSplits.splits}
-          members={data.members}
-          payers={payers}
-          onClose={() => setEditSplits(null)}
-          onSaved={async (perPerson) => {
-            await doUpdateSplits({ data: { costId: editSplits.cost.id, perPerson } });
-            setEditSplits(null);
-            refresh();
-          }}
-        />
-      )}
 
       {showTravellers && tripId && (
         <TravellersModal tripId={tripId} onClose={() => { setShowTravellers(false); refresh(); }} />
@@ -526,15 +503,8 @@ function AddPaymentModal({
     return list;
   }, [members, payers, user?.id]);
 
-  // Default: everyone selected.
-  const [splitAmong, setSplitAmong] = useState<string[]>([]);
-  useEffect(() => {
-    setSplitAmong(allPeople.map((p) => p.key));
-  }, [allPeople.length]);
-
-  const toggleSplit = (key: string) => {
-    setSplitAmong((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
-  };
+  // Always split equally between everyone on the trip — no picking, no modals.
+  const splitAmong = allPeople.map((p) => p.key);
 
 
   async function submit() {
@@ -542,9 +512,8 @@ function AddPaymentModal({
     try {
       const amt = parseFloat(amount);
       if (!amt || amt <= 0) throw new Error("Enter a valid amount");
-      // With nobody to pick yet (fresh trip), the server assigns the cost
-      // 100% to whoever paid — matching the on-screen note.
-      if (splitAmong.length === 0 && allPeople.length > 0) throw new Error("Select at least one person to split between");
+      // splitAmong is always "everyone"; with nobody else on the trip yet the
+      // server assigns the cost 100% to whoever paid.
       let receiptPath: string | null = null;
       if (receiptFile) {
         if (!user) throw new Error("Please sign in again to attach a receipt.");
@@ -624,55 +593,23 @@ function AddPaymentModal({
             </Row>
           )}
 
-          {(
-            <Row label="Split between — tick EVERYONE who shares the cost, including whoever paid">
-              {allPeople.length === 0 ? (
-                <div className="text-xs text-muted-foreground">
-                  Add travellers or extra payers to split with. For now it goes 100% to whoever paid.
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <div className="flex flex-wrap gap-1.5 text-[11px]">
-                    <button type="button" onClick={() => setSplitAmong(allPeople.map((p) => p.key))}
-                      className="rounded-md border border-border px-2 py-0.5 hover:bg-muted">All</button>
-                    <button type="button" onClick={() => setSplitAmong([])}
-                      className="rounded-md border border-border px-2 py-0.5 hover:bg-muted">None</button>
-                  </div>
-                  <ul className="space-y-1">
-                    {allPeople.map((p) => (
-                      <li key={p.key}>
-                        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border/60 px-2 py-1.5 text-sm hover:bg-muted">
-                          <input
-                            type="checkbox"
-                            checked={splitAmong.includes(p.key)}
-                            onChange={() => toggleSplit(p.key)}
-                          />
-                          <span className="truncate">{p.label}</span>
-                          {splitAmong.includes(p.key) && amount && (
-                            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                              {fmtEUR((parseFloat(amount) || 0) / splitAmong.length)}
-                            </span>
-                          )}
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                  {/* Foot-gun guard: payer unticked = the others owe them everything. */}
-                  {splitAmong.length > 0 && (() => {
-                    const payerKey = paidBy === "self" ? (user?.id ? `u:${user.id}` : null) : paidBy;
-                    if (payerKey && allPeople.some((p) => p.key === payerKey) && !splitAmong.includes(payerKey)) {
-                      return (
-                        <div className="rounded-md border border-amber-400/60 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                          The payer isn't ticked — they'd owe nothing and be owed the FULL amount. For a half-half split, tick the payer too.
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                </div>
-              )}
-            </Row>
-          )}
+          <Row label="Split">
+            {allPeople.length === 0 ? (
+              <div className="text-xs text-muted-foreground">
+                Just you for now — the cost goes 100% to whoever paid. Add people on the Travellers page to share costs.
+              </div>
+            ) : (
+              <div className="rounded-md border border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
+                Split equally between {allPeople.length}:{" "}
+                <span className="text-foreground">{allPeople.map((p) => p.label).join(", ")}</span>
+                {amount && parseFloat(amount) > 0 && (
+                  <span className="ml-1 font-mono text-foreground">
+                    — {fmtEUR((parseFloat(amount) || 0) / allPeople.length)} each
+                  </span>
+                )}
+              </div>
+            )}
+          </Row>
 
           <Row label="Description">
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="input" maxLength={500} />
