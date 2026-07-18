@@ -1,0 +1,247 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Tripping — v17 palette
+ * Paper cream, ink navy, editorial serif headlines, glass cards, gold + blue accents.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+  --radius-2xl: calc(var(--radius) + 14px);
+  --radius-3xl: calc(var(--radius) + 22px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-gold: var(--gold);
+  --color-blue-signal: var(--blue-signal);
+  --color-navy-deep: var(--navy-deep);
+  --color-cream: var(--cream);
+  --color-paper: var(--paper);
+  --font-display: Georgia, "Times New Roman", ui-serif, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root {
+  --radius: 1.375rem; /* 22px */
+
+  --paper: oklch(0.985 0.012 85);        /* #fffaf2 */
+  --cream: oklch(0.985 0.012 85);
+  --ink: oklch(0.24 0.04 260);           /* #102033 */
+  --navy-deep: oklch(0.24 0.04 260);
+  --gold: oklch(0.72 0.12 78);           /* #c9963e */
+  --blue-signal: oklch(0.42 0.13 258);   /* #174f93 */
+  --green-signal: oklch(0.55 0.10 165);  /* #15785e */
+  --red-signal: oklch(0.62 0.20 30);     /* #d3422f */
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+
+  --card: oklch(1 0 0);
+  --card-foreground: var(--ink);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--ink);
+
+  --primary: var(--blue-signal);
+  --primary-foreground: oklch(0.985 0.005 85);
+
+  --secondary: oklch(0.94 0.015 80);
+  --secondary-foreground: var(--ink);
+
+  --muted: oklch(0.95 0.012 80);
+  --muted-foreground: oklch(0.5 0.03 258);
+
+  --accent: var(--gold);
+  --accent-foreground: var(--ink);
+
+  --destructive: var(--red-signal);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: var(--green-signal);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: var(--gold);
+  --warning-foreground: var(--ink);
+
+  --border: oklch(0.9 0.008 80);
+  --input: oklch(0.92 0.008 80);
+  --ring: var(--blue-signal);
+}
+
+.dark {
+  --background: oklch(0.16 0.03 258);
+  --foreground: var(--paper);
+
+  --card: oklch(0.22 0.035 258);
+  --card-foreground: var(--paper);
+
+  --popover: oklch(0.22 0.035 258);
+  --popover-foreground: var(--paper);
+
+  --primary: oklch(0.72 0.10 78);
+  --primary-foreground: oklch(0.16 0.03 258);
+
+  --secondary: oklch(0.28 0.035 258);
+  --secondary-foreground: var(--paper);
+
+  --muted: oklch(0.26 0.03 258);
+  --muted-foreground: oklch(0.75 0.02 80);
+
+  --accent: var(--gold);
+  --accent-foreground: oklch(0.16 0.03 258);
+
+  --border: oklch(0.32 0.035 258);
+  --input: oklch(0.3 0.035 258);
+  --ring: var(--gold);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html, body {
+    background: linear-gradient(135deg, oklch(0.96 0.02 80), oklch(0.97 0.02 220) 50%, oklch(0.98 0.02 85));
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .dark html, .dark body {
+    background: linear-gradient(135deg, oklch(0.18 0.04 258), oklch(0.14 0.04 258));
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: 0;
+    font-weight: 600;
+  }
+
+  .font-mono-num {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@utility glass {
+  background-color: color-mix(in oklab, var(--color-card) 82%, transparent);
+  border: 1px solid color-mix(in oklab, white 60%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+@utility card-soft {
+  background-color: color-mix(in oklab, var(--color-card) 88%, transparent);
+  color: var(--color-card-foreground);
+  border-radius: var(--radius-2xl);
+  border: 1px solid color-mix(in oklab, white 65%, transparent);
+  box-shadow: 0 12px 34px -14px color-mix(in oklab, var(--ink) 20%, transparent);
+}
+
+@utility card-elev {
+  background-color: color-mix(in oklab, var(--color-card) 88%, transparent);
+  color: var(--color-card-foreground);
+  border-radius: var(--radius-2xl);
+  border: 1px solid color-mix(in oklab, white 65%, transparent);
+  box-shadow: 0 12px 34px -14px color-mix(in oklab, var(--ink) 20%, transparent);
+}
+
+@utility card-deep {
+  background: linear-gradient(135deg, var(--ink), oklch(0.28 0.05 258));
+  color: var(--cream);
+  border-radius: var(--radius-3xl);
+  position: relative;
+  overflow: hidden;
+}
+
+@utility chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background-color: var(--color-card);
+  color: var(--color-foreground);
+  border: 1px solid var(--color-border);
+}
+
+@utility chip-gold {
+  background-color: color-mix(in oklab, var(--gold) 22%, white);
+  color: oklch(0.42 0.08 65);
+  border-color: color-mix(in oklab, var(--gold) 40%, transparent);
+}
+
+@utility chip-blue {
+  background-color: color-mix(in oklab, var(--blue-signal) 12%, white);
+  color: var(--blue-signal);
+  border-color: color-mix(in oklab, var(--blue-signal) 30%, transparent);
+}
+
+@utility chip-green {
+  background-color: color-mix(in oklab, var(--green-signal) 14%, white);
+  color: oklch(0.38 0.08 165);
+  border-color: color-mix(in oklab, var(--green-signal) 32%, transparent);
+}
+
+@utility chip-red {
+  background-color: color-mix(in oklab, var(--red-signal) 14%, white);
+  color: var(--red-signal);
+  border-color: color-mix(in oklab, var(--red-signal) 32%, transparent);
+}
+
+@utility hero-gradient {
+  background:
+    radial-gradient(120% 80% at 0% 0%, oklch(0.72 0.12 78 / 0.18), transparent 60%),
+    radial-gradient(120% 80% at 100% 0%, oklch(0.55 0.14 220 / 0.14), transparent 60%),
+    linear-gradient(180deg, var(--paper), oklch(0.96 0.02 80));
+}
+
+@utility map-canvas {
+  background:
+    radial-gradient(120% 90% at 50% 110%, oklch(0.94 0.02 80), transparent 60%),
+    linear-gradient(180deg, oklch(0.94 0.03 220), oklch(0.97 0.012 80));
+}
+
+/* Red blinking live-location pulse — used across map + hero live card. */
+.blink-dot {
+  display: inline-flex;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 9999px;
+  background-color: var(--red-signal);
+  box-shadow: 0 0 0 rgba(211, 66, 47, 0.7);
+  animation: tripping-pulse 1.4s infinite;
+}
+
+@keyframes tripping-pulse {
+  70% { box-shadow: 0 0 0 14px rgba(211, 66, 47, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(211, 66, 47, 0); }
+}
