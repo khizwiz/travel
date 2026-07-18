@@ -29,13 +29,17 @@ export function aiUrl(): string {
 }
 
 export function aiModel(): string {
+  // Override without a redeploy: npx wrangler secret/var AI_MODEL.
+  // (gemini-2.5-flash was retired for new API users mid-2026 -> gemini-3.5-flash.)
+  const override = process.env.AI_MODEL;
+  if (override) return override;
   switch (provider()) {
     case "anthropic":
       return "claude-haiku-4-5";
     case "gemini":
-      return "gemini-2.5-flash";
+      return "gemini-3.5-flash";
     default:
-      return "google/gemini-2.5-flash";
+      return "google/gemini-3.5-flash";
   }
 }
 

@@ -515,9 +515,9 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
         </div>
 
         {/* ADVANCED: invite by email (creates a login). Hidden behind a details toggle. */}
-        <details className="mt-4 rounded-lg border border-border p-3">
+        <details open className="mt-4 rounded-lg border border-border p-3">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Invite by email (creates an app login)
+            Invite by email — creates a login (they can add costs)
           </summary>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <label className="sm:col-span-3 block">
