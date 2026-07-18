@@ -1,4 +1,5 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
@@ -15,6 +16,7 @@ function hash(s: string, target: string): string {
 }
 
 export const translateStrings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
       .object({
@@ -81,7 +83,7 @@ export const translateStrings = createServerFn({ method: "POST" })
           }
         }
       } catch {
-        // fall through â€” untranslated strings return as source
+        // fall through — untranslated strings return as source
       }
     }
 

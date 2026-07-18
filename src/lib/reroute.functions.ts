@@ -1,4 +1,4 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
@@ -63,7 +63,7 @@ export const suggestReroute = createServerFn({ method: "POST" })
       `Currently in: ${data.currentFrom}`,
       data.originalTo ? `Originally planned to: ${data.originalTo}` : null,
       data.nextFixedStop ? `Next fixed stop on the calendar: ${data.nextFixedStop}` : null,
-      data.freeText ? `Driver says: "${data.freeText}"` : `Driver has not said where they want to go â€” suggest 3 sensible options.`,
+      data.freeText ? `Driver says: "${data.freeText}"` : `Driver has not said where they want to go — suggest 3 sensible options.`,
     ].filter(Boolean).join("\n");
     try {
       const r = await fetch(LOVABLE_AI_URL, {
@@ -79,7 +79,7 @@ export const suggestReroute = createServerFn({ method: "POST" })
           response_format: { type: "json_object" },
         }),
       });
-      if (r.status === 429) return { error: "Rate limited â€” try again in a moment." };
+      if (r.status === 429) return { error: "Rate limited — try again in a moment." };
       if (r.status === 402) return { error: "AI credits exhausted." };
       if (!r.ok) return { error: `AI error (${r.status})` };
       const j: any = await r.json();

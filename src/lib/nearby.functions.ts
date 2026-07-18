@@ -1,12 +1,13 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
 
-const SYSTEM = `You are a road-trip local scout for a family driving a Mitsubishi L200 across Europe (Istanbul â†’ across Europe â†’ back).
+const SYSTEM = `You are a road-trip local scout for a family driving a Mitsubishi L200 across Europe (Istanbul → across Europe → back).
 Given a GPS coordinate, return interesting things to see and do within 50 km, focused on:
 - Brutalist / raw-concrete / socialist-modernist architecture (the driver is obsessed with brutalism)
 - Unusual monuments, abandoned/soviet-era buildings, striking bridges, dams, radio towers
-- Bars & cafes with character (dive bars, rooftops, historic bars â€” not chains)
+- Bars & cafes with character (dive bars, rooftops, historic bars — not chains)
 - Sightseeing (viewpoints, historic centres, museums, natural spots) kid-friendly when possible
 - One or two food picks worth the detour
 
@@ -25,7 +26,7 @@ Return STRICT JSON only, no prose. Shape:
     "why": "<one short sentence>"
   }
 }
-Aim for 6â€“8 picks, spread across kinds. Be concrete (real place names). If you're unsure, omit rather than invent.`;
+Aim for 6–8 picks, spread across kinds. Be concrete (real place names). If you're unsure, omit rather than invent.`;
 
 export type NearbyPick = {
   kind: "brutalist" | "sight" | "bar" | "food" | "kids";
@@ -36,6 +37,7 @@ export type NearbyPick = {
 };
 
 export const getNearbySuggestions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
       .object({
@@ -64,7 +66,7 @@ export const getNearbySuggestions = createServerFn({ method: "POST" })
           temperature: 0.6,
         }),
       });
-      if (r.status === 429) return { error: "Rate limited â€” try again in a moment." };
+      if (r.status === 429) return { error: "Rate limited — try again in a moment." };
       if (r.status === 402) return { error: "AI credits exhausted." };
       if (!r.ok) {
         const t = await r.text();

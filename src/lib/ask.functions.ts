@@ -1,15 +1,17 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
 
 const SYSTEM = `You are "Ask Tripping", the in-app assistant for the Tripping road-trip journal.
-Trip: Istanbul â†’ across Europe â†’ back to Istanbul, Julyâ€“August 2026, driven by Khizar (with Simona and their son Fez for parts).
+Trip: Istanbul → across Europe → back to Istanbul, July–August 2026, driven by Khizar (with Simona and their son Fez for parts).
 Behave as an in-app search + travel helper:
 - If the user's question is about the trip itself (dates, cities, bookings, hotels, vehicle, checklist, missing info), answer strictly from the APP CONTEXT provided below. Do not invent details that aren't there. If the answer isn't in the context, say so plainly.
 - For general travel questions (things to do, food, kids activities, comparisons) you may answer from general knowledge, keeping it practical and current-season.
-- Keep answers concise (3â€“6 sentences unless asked). Never invent booking references or exact private addresses.`;
+- Keep answers concise (3–6 sentences unless asked). Never invent booking references or exact private addresses.`;
 
 export const askTripping = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
       .object({
@@ -34,7 +36,7 @@ export const askTripping = createServerFn({ method: "POST" })
           temperature: 0.4,
         }),
       });
-      if (r.status === 429) return { error: "Rate limited â€” try again in a moment." };
+      if (r.status === 429) return { error: "Rate limited — try again in a moment." };
       if (r.status === 402) return { error: "AI credits exhausted." };
       if (!r.ok) {
         const t = await r.text();

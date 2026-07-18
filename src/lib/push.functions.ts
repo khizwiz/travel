@@ -1,4 +1,4 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
@@ -29,7 +29,7 @@ async function loadOrCreateVapid(): Promise<VapidKeys> {
   return keys;
 }
 
-/** Public â€” anyone can read the public key (needed to subscribe). */
+/** Public — anyone can read the public key (needed to subscribe). */
 export const getVapidPublicKey = createServerFn({ method: "GET" }).handler(async () => {
   const keys = await loadOrCreateVapid();
   return { publicKey: keys.publicKey };

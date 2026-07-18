@@ -1,4 +1,4 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
@@ -87,7 +87,7 @@ export const verifyAdminPassword = createServerFn({ method: "POST" })
       };
     }
 
-    // Crew: Miezko â€” passenger with admin UI except bookings/documents/settings.
+    // Crew: Miezko — passenger with admin UI except bookings/documents/settings.
     const { userId, supabaseAdmin } = await provisionUser(CREW_EMAIL, data.password, "Miezko");
     // Grant 'owner' app-role so has_role() / is_owner() checks pass for admin-style writes.
     await supabaseAdmin

@@ -1,4 +1,4 @@
-﻿// Seed itinerary, vehicle, and traveller data for Tripping.
+// Seed itinerary, vehicle, and traveller data for Tripping.
 // Sensitive details (exact addresses, booking URLs) are flagged private.
 
 export type TransportMode = "drive" | "flight" | "ferry" | "mixed";
@@ -99,7 +99,7 @@ export const ITINERARY: ItineraryDay[] = [
     borderWaitMin: 60,
     accommodation: null,
     missing: ["Sofia accommodation"],
-    notes: "Departure leg. Border at KapÄ±kule.",
+    notes: "Departure leg. Border at Kapıkule.",
   }),
   D("2026-07-19", {
     from: "Sofia",
@@ -197,7 +197,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: {
       name: "Old Town Apartments",
       addressPublic: "Berlin, Germany",
-      addressPrivate: "SchĂ¶nhauser Allee 5, 10119 Berlin, Germany",
+      addressPrivate: "SchA�nhauser Allee 5, 10119 Berlin, Germany",
       privateNote: "Exact address, booking URL and reference are private.",
     },
   }),
@@ -212,7 +212,7 @@ export const ITINERARY: ItineraryDay[] = [
       accommodation: {
         name: "Old Town Apartments",
         addressPublic: "Berlin, Germany",
-        addressPrivate: "SchĂ¶nhauser Allee 5, 10119 Berlin, Germany",
+        addressPrivate: "SchA�nhauser Allee 5, 10119 Berlin, Germany",
       },
       notes: "Berlin stay.",
     }),
@@ -235,7 +235,7 @@ export const ITINERARY: ItineraryDay[] = [
       bookingRef: "KCT7S9Z",
       reservation: "Trip.com 1638322148318504",
       baggageNote:
-        "Personal item up to 45Ă—36Ă—20 cm per traveller. Khizar: additional purchased 15 kg cabin bag.",
+        "Personal item up to 45A�36A�20 cm per traveller. Khizar: additional purchased 15 kg cabin bag.",
     },
     accommodation: null,
     missing: ["Rome accommodation (return night)"],
@@ -299,10 +299,10 @@ export const ITINERARY: ItineraryDay[] = [
       to: "Patras",
       departLocal: "18:00",
       durationMin: 21 * 60,
-      note: "Overnight ferry â€” cabin sleep onboard.",
+      note: "Overnight ferry — cabin sleep onboard.",
     },
     accommodation: null,
-    missing: ["Anconaâ€“Patras ferry booking reference"],
+    missing: ["Ancona–Patras ferry booking reference"],
   }),
   D("2026-08-21", {
     from: "Patras (arrive 15:00)",
@@ -365,7 +365,7 @@ export const ITINERARY: ItineraryDay[] = [
     durationMin: 2 * 60,
     borderWaitMin: 60,
     accommodation: null,
-    notes: "Cross via Kipi/Ä°psala border into Turkey. Overnight in Edirne.",
+    notes: "Cross via Kipi/İpsala border into Turkey. Overnight in Edirne.",
     missing: ["Edirne accommodation"],
   }),
   D("2026-08-27", {
@@ -376,7 +376,7 @@ export const ITINERARY: ItineraryDay[] = [
     distanceKm: 240,
     durationMin: 2 * 60 + 45,
     accommodation: null,
-    notes: "Home run â€” Edirne to Istanbul.",
+    notes: "Home run — Edirne to Istanbul.",
   }),
 ];
 
@@ -385,31 +385,31 @@ export const MISSING_INFO: { item: string; why: string; where: string; blocking:
   {
     item: "Remaining hotels (Sofia, Belgrade, Budapest, Zagreb, Riccione, Rome, Lake Garda, Pescara/Chieti, Athens, Alexandroupoli, Edirne)",
     why: "Check-in reminders and Today screen accommodation card cannot populate without confirmed bookings.",
-    where: "Itinerary cards Â· Today Â· Bookings Â· Reminders",
+    where: "Itinerary cards · Today · Bookings · Reminders",
     blocking: false,
   },
   {
-    item: "Bariâ€“Patras ferry booking",
+    item: "Bari–Patras ferry booking",
     why: "Operator-specific check-in time, vehicle deck loading window, and cabin number drive the 21 Aug reminders.",
-    where: "21 Aug itinerary card Â· Bookings Â· Reminders",
+    where: "21 Aug itinerary card · Bookings · Reminders",
     blocking: false,
   },
   {
     item: "AFF Skydiving provider & dropzone (Milan area)",
     why: "Determines exact location, schedule, medical paperwork, and weather monitoring rules.",
-    where: "3â€“4 Aug itinerary cards Â· Reminders Â· Weather warnings",
+    where: "3–4 Aug itinerary cards · Reminders · Weather warnings",
     blocking: false,
   },
   {
     item: "AFF course schedule",
     why: "Morning briefing times and per-jump windows drive day-of reminders.",
-    where: "3â€“4 Aug itinerary Â· Reminders",
+    where: "3–4 Aug itinerary · Reminders",
     blocking: false,
   },
   {
     item: "AFF nearby accommodation",
     why: "Distance from dropzone affects wake-up times and transport.",
-    where: "3â€“4 Aug itinerary Â· Bookings",
+    where: "3–4 Aug itinerary · Bookings",
     blocking: false,
   },
   {
@@ -421,7 +421,7 @@ export const MISSING_INFO: { item: string; why: string; where: string; blocking:
   {
     item: "Volos vs Larissa final selection",
     why: "Day 25 Aug distance and duration recalculate after the choice.",
-    where: "24â€“25 Aug itinerary cards",
+    where: "24–25 Aug itinerary cards",
     blocking: false,
   },
   {
@@ -547,7 +547,7 @@ function haversineKmInline(a: { lat: number; lng: number }, b: { lat: number; ln
 }
 
 export function formatDuration(min?: number | null): string {
-  if (min == null) return "â€”";
+  if (min == null) return "—";
   const h = Math.floor(min / 60);
   const m = min % 60;
   if (h === 0) return `${m} min`;

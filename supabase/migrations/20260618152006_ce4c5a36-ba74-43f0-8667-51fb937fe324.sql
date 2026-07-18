@@ -1,6 +1,6 @@
-﻿
+
 -- =====================================================================
--- EU TRIPPING â€” full schema, RLS, helpers, owner bootstrap (v2)
+-- EU TRIPPING — full schema, RLS, helpers, owner bootstrap (v2)
 -- Strategy: create all tables and base policies first; cross-table
 -- policies are added at the end.
 -- =====================================================================
@@ -843,7 +843,7 @@ RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   IF lower(NEW.email) = 'owner@example.com' THEN
     INSERT INTO public.trips (name, slug, public_slug, starts_on, ends_on, owner_id, public_tracking_enabled)
-    VALUES ('EU Tripping â€” Istanbul and back', 'eu-tripping-2026', 'eu-tripping',
+    VALUES ('EU Tripping — Istanbul and back', 'eu-tripping-2026', 'eu-tripping',
             '2026-07-01'::date, '2026-08-31'::date, NEW.id, true)
     ON CONFLICT (slug) DO UPDATE SET owner_id = EXCLUDED.owner_id;
   END IF;

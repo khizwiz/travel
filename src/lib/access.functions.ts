@@ -1,4 +1,4 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
@@ -188,7 +188,7 @@ export const getInvitationPublic = createServerFn({ method: "GET" })
   });
 
 // Look up the friendly_slug for a token (used by /invite/:token page).
-// Public â€” does NOT activate the invitation (that requires sign-in via /p/:slug).
+// Public — does NOT activate the invitation (that requires sign-in via /p/:slug).
 export const getInvitationByToken = createServerFn({ method: "GET" })
   .inputValidator((d: unknown) =>
     z.object({ token: z.string().trim().min(10).max(100) }).parse(d),
