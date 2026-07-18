@@ -1,0 +1,53 @@
+name: Migrate database
+
+# Applies SQL migrations from supabase/migrations to the live Supabase project
+# whenever they change on main - the same "automatic backend" experience
+# Lovable provided, but reviewable in pull requests first.
+#
+# Requires three repository secrets (Settings -> Secrets -> Actions):
+#   SUPABASE_ACCESS_TOKEN  - supabase.com/dashboard/account/tokens
+#   SUPABASE_PROJECT_ID    - the project ref (Settings -> General)
+#   SUPABASE_DB_PASSWORD   - Settings -> Database (reset it if unknown)
+# See docs/BACKEND.md.
+
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/migrations/**']
+  workflow_dispatch:
+
+jobs:
+  push-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
+
+      - name: Mark Lovable-era migrations as already applied
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          # Everything before our first post-Lovable migration already lives in
+          # the database (Lovable applied it) - record that instead of re-running.
+          BASELINE=20260718120000
+          for f in supabase/migrations/*.sql; do
+            ts=$(basename "$f" | cut -d_ -f1)
+            if [ "$ts" -lt "$BASELINE" ]; then
+              supabase migration repair "$ts" --status applied || true
+            fi
+          done
+
+      - name: Apply new migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase db push
