@@ -19,6 +19,10 @@ interface FuelState {
   lastLat?: number;
   lastLng?: number;
   lastTs?: number;
+  // Trip totals (v2)
+  totalTankedL: number;   // actual litres, from manual entries (or estimate when skipped)
+  totalEstUsedL: number;  // estimated litres burned, accumulated at each fill
+  fills: number;
 }
 
 const CONSUMPTION_L_PER_100 = 9;
@@ -31,7 +35,19 @@ function loadState(): FuelState | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as FuelState) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<FuelState>;
+    // v1 -> v2 migration: totals default to zero.
+    return {
+      fullTs: parsed.fullTs ?? Date.now(),
+      kmSinceFill: parsed.kmSinceFill ?? 0,
+      lastLat: parsed.lastLat,
+      lastLng: parsed.lastLng,
+      lastTs: parsed.lastTs,
+      totalTankedL: parsed.totalTankedL ?? 0,
+      totalEstUsedL: parsed.totalEstUsedL ?? 0,
+      fills: parsed.fills ?? 0,
+    };
   } catch {
     return null;
   }
@@ -45,10 +61,14 @@ function saveState(s: FuelState | null) {
   } catch {}
 }
 
+function estUsedLitres(state: FuelState | null): number {
+  if (!state) return 0;
+  return Math.min(VEHICLE.tankLitres, (state.kmSinceFill * CONSUMPTION_L_PER_100) / 100);
+}
+
 function percentLeft(state: FuelState | null): number | null {
   if (!state) return null;
-  const litresUsed = (state.kmSinceFill * CONSUMPTION_L_PER_100) / 100;
-  const pct = 100 - (litresUsed / VEHICLE.tankLitres) * 100;
+  const pct = 100 - (estUsedLitres(state) / VEHICLE.tankLitres) * 100;
   return Math.max(0, Math.min(100, Math.round(pct)));
 }
 
@@ -57,6 +77,9 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
   const { liveFix } = useApp();
   const [state, setState] = useState<FuelState | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [radiusKm, setRadiusKm] = useState(10);
+  const [fillOpen, setFillOpen] = useState(false);
+  const [litresInput, setLitresInput] = useState("");
   const lastAppliedTs = useRef<number>(0);
 
   useEffect(() => {
@@ -104,8 +127,8 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
 
   const fn = useServerFn(getFuelStationsNearby);
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["fuel-stations", live?.lat, live?.lng, shouldSearch],
-    queryFn: () => fn({ data: { lat: live!.lat, lng: live!.lng } }),
+    queryKey: ["fuel-stations", live?.lat, live?.lng, radiusKm, shouldSearch],
+    queryFn: () => fn({ data: { lat: live!.lat, lng: live!.lng, radiusMeters: radiusKm * 1000 } }),
     enabled: shouldSearch,
     staleTime: 60_000,
   });
@@ -117,19 +140,31 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
     return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   }, [state]);
 
-  function markTankFull() {
+  // Tank full: accumulate totals, then reset the since-fill odometer.
+  // `litres` = what actually went in (manual); falls back to the estimate.
+  function confirmTankFull() {
+    const est = estUsedLitres(state);
+    const manual = parseFloat(litresInput.replace(",", "."));
+    const tanked = Number.isFinite(manual) && manual > 0 ? Math.min(manual, 200) : est;
     const next: FuelState = {
       fullTs: Date.now(),
       kmSinceFill: 0,
       lastLat: liveFix?.lat,
       lastLng: liveFix?.lng,
       lastTs: liveFix?.ts,
+      totalTankedL: (state?.totalTankedL ?? 0) + tanked,
+      totalEstUsedL: (state?.totalEstUsedL ?? 0) + est,
+      fills: (state?.fills ?? 0) + 1,
     };
     setState(next);
     saveState(next);
+    setFillOpen(false);
+    setLitresInput("");
   }
 
   const kmDisplay = state ? state.kmSinceFill.toFixed(1) : "0.0";
+  const sinceFillEst = estUsedLitres(state);
+  const totalEst = (state?.totalEstUsedL ?? 0) + sinceFillEst;
 
   return (
     <section className="card-elev p-4">
@@ -157,19 +192,70 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
         </div>
       </div>
 
-      {isAdmin && (
+      {/* Trip totals: estimate vs what actually went in the tank. */}
+      {state && (state.fills > 0 || sinceFillEst > 0) && (
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg border border-border px-3 py-2">
+            <div className="text-muted-foreground">Estimated used</div>
+            <div className="font-mono text-sm">{totalEst.toFixed(1)} L</div>
+          </div>
+          <div className="rounded-lg border border-border px-3 py-2">
+            <div className="text-muted-foreground">Actually tanked{state.fills > 0 ? ` · ${state.fills} fill${state.fills > 1 ? "s" : ""}` : ""}</div>
+            <div className="font-mono text-sm">{state.totalTankedL.toFixed(1)} L</div>
+          </div>
+        </div>
+      )}
+
+      {isAdmin && !fillOpen && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
-            onClick={markTankFull}
+            onClick={() => setFillOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
           >
             <Fuel className="h-4 w-4" /> Tank full
           </button>
           {state && (
             <span className="text-xs text-muted-foreground">
-              Est. ~{Math.round((state.kmSinceFill * CONSUMPTION_L_PER_100) / 100)} L used of {VEHICLE.tankLitres} L
+              Est. ~{Math.round(sinceFillEst)} L used of {VEHICLE.tankLitres} L since last fill
             </span>
           )}
+        </div>
+      )}
+
+      {isAdmin && fillOpen && (
+        <div className="mt-3 rounded-lg border border-border p-3">
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            How many litres went in? (optional)
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={200}
+              step="0.1"
+              value={litresInput}
+              onChange={(e) => setLitresInput(e.target.value)}
+              placeholder={sinceFillEst > 0 ? `~${sinceFillEst.toFixed(0)} (estimate)` : "litres"}
+              className="input w-32"
+              autoFocus
+            />
+            <button
+              onClick={confirmTankFull}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+            >
+              <Fuel className="h-4 w-4" /> Save fill
+            </button>
+            <button
+              onClick={() => { setFillOpen(false); setLitresInput(""); }}
+              className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Leave empty to record the estimate ({sinceFillEst.toFixed(1)} L). The gauge resets to 100% either way.
+          </p>
         </div>
       )}
 
@@ -196,6 +282,21 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
 
       {shouldSearch && (
         <div className="mt-3 space-y-2">
+          <label className="block rounded-lg border border-border px-3 py-2">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Search radius</span>
+              <span className="font-mono">{radiusKm} km</span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={50}
+              step={1}
+              value={radiusKm}
+              onChange={(e) => setRadiusKm(Number(e.target.value))}
+              className="mt-1 w-full accent-[var(--ink)]"
+            />
+          </label>
           {isLoading && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -206,7 +307,7 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
             <div className="text-xs text-destructive">Couldn't reach the map provider just now.</div>
           )}
           {!isLoading && stations.length === 0 && (
-            <div className="text-xs text-muted-foreground">No stations found within 10 km.</div>
+            <div className="text-xs text-muted-foreground">No stations found within {radiusKm} km.</div>
           )}
           {stations.map((s) => (
             <a
