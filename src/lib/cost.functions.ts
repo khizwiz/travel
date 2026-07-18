@@ -493,22 +493,88 @@ export const listTravellers = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     await ensureOwner(supabase, userId, data.tripId);
-    const { data: members } = await supabase
-      .from("trip_members")
-      .select("id, user_id, status, starts_on, ends_on, role_in_trip, profiles:user_id(display_name, email)")
-      .eq("trip_id", data.tripId)
-      .order("created_at", { ascending: true });
-    return (members ?? []).map((m: any) => ({
-      id: m.id,
-      user_id: m.user_id,
-      status: m.status,
-      starts_on: m.starts_on,
-      ends_on: m.ends_on,
-      role_in_trip: m.role_in_trip,
-      display_name: m.profiles?.display_name ?? m.profiles?.email ?? "Member",
-      email: m.profiles?.email ?? null,
-    }));
+    // Plain queries via service role (relation joins failed silently on this
+    // schema); starter_password is app-generated only and owner-visible.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    let rows: any[] | null = null;
+    {
+      const res = await supabaseAdmin
+        .from("trip_members")
+        .select("id, user_id, status, starts_on, ends_on, role_in_trip, starter_password")
+        .eq("trip_id", data.tripId)
+        .order("created_at", { ascending: true });
+      if (res.error && /column/i.test(res.error.message)) {
+        // starter_password migration not applied yet — degrade gracefully.
+        const res2 = await supabaseAdmin
+          .from("trip_members")
+          .select("id, user_id, status, starts_on, ends_on, role_in_trip")
+          .eq("trip_id", data.tripId)
+          .order("created_at", { ascending: true });
+        rows = res2.data ?? [];
+      } else if (res.error) {
+        throw new Error(res.error.message);
+      } else {
+        rows = res.data ?? [];
+      }
+    }
+    const ids = rows.map((m: any) => m.user_id).filter(Boolean);
+    const { data: profs } = ids.length
+      ? await supabaseAdmin.from("profiles").select("id, display_name, email").in("id", ids)
+      : { data: [] as any[] };
+    const profMap = new Map(((profs ?? []) as any[]).map((p) => [p.id, p]));
+    return rows.map((m: any) => {
+      const p = profMap.get(m.user_id);
+      return {
+        id: m.id,
+        user_id: m.user_id,
+        status: m.status,
+        starts_on: m.starts_on,
+        ends_on: m.ends_on,
+        role_in_trip: m.role_in_trip,
+        starter_password: m.starter_password ?? null,
+        display_name: p?.display_name ?? p?.email ?? "Member",
+        email: p?.email ?? null,
+      };
+    });
   });
+
+// Owner-only: adjust a member's presence window (someone stays longer/leaves
+// earlier). Empty dates mean "whole trip".
+export const updateMemberDates = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({
+    memberId: z.string().uuid(),
+    startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+    endsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: m } = await supabase
+      .from("trip_members").select("trip_id").eq("id", data.memberId).single();
+    if (!m) throw new Error("Not found");
+    await ensureOwner(supabase, userId, m.trip_id);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("trip_members")
+      .update({ starts_on: data.startsOn, ends_on: data.endsOn })
+      .eq("id", data.memberId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Best-effort: remember the app-GENERATED password so the owner can re-read
+// it when someone forgets. Never called with a password a human typed.
+async function storeStarterPassword(tripId: string, targetUserId: string, password: string) {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Column is newer than the generated DB types — cast is deliberate.
+    await supabaseAdmin
+      .from("trip_members")
+      .update({ starter_password: password } as any)
+      .eq("trip_id", tripId)
+      .eq("user_id", targetUserId);
+  } catch { /* column may not exist yet — reveal-once still works */ }
+}
 
 export const addTraveller = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -558,6 +624,7 @@ export const addTraveller = createServerFn({ method: "POST" })
       role_in_trip: "passenger",
     });
     if (error && !/duplicate/i.test(error.message)) throw new Error(error.message);
+    if (starterPassword && prof?.id) await storeStarterPassword(data.tripId, prof.id, starterPassword);
     return { ok: true, starterPassword };
   });
 
@@ -577,6 +644,7 @@ export const resetMemberPassword = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error } = await supabaseAdmin.auth.admin.updateUserById(m.user_id, { password });
     if (error) throw new Error(error.message);
+    await storeStarterPassword(m.trip_id, m.user_id, password);
     return { password };
   });
 

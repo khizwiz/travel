@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Check, Copy, Loader2, Lock, UserMinus, UserPlus } from "lucide-react";
 import {
-  addTraveller, listTravellers, removeTraveller, resetMemberPassword,
+  addTraveller, listTravellers, removeTraveller, resetMemberPassword, updateMemberDates,
 } from "@/lib/cost.functions";
 import { addCostPayer, listCostPayers, removeCostPayer } from "@/lib/cost-payers.functions";
 
@@ -13,6 +13,7 @@ export function TravellersManager({ tripId }: { tripId: string }) {
   const doAdd = useServerFn(addTraveller);
   const doRemove = useServerFn(removeTraveller);
   const doResetPwd = useServerFn(resetMemberPassword);
+  const doUpdateDates = useServerFn(updateMemberDates);
   const doListPayers = useServerFn(listCostPayers);
   const doAddPayer = useServerFn(addCostPayer);
   const doRemovePayer = useServerFn(removeCostPayer);
@@ -60,7 +61,15 @@ export function TravellersManager({ tripId }: { tripId: string }) {
       const res = await doResetPwd({ data: { memberId: r.id } });
       setReveal({ email: r.email ?? r.display_name, password: res.password });
       setCopied(false);
+      await refresh();
     } catch (e: any) { alert(e?.message); }
+  }
+
+  async function saveDates(r: any, startsOn: string, endsOn: string) {
+    try {
+      await doUpdateDates({ data: { memberId: r.id, startsOn: startsOn || null, endsOn: endsOn || null } });
+      await refresh();
+    } catch (e: any) { alert(e?.message ?? "Failed to update dates"); }
   }
 
   async function addPayer() {
@@ -151,26 +160,59 @@ export function TravellersManager({ tripId }: { tripId: string }) {
         <ul className="mt-2 space-y-2">
           {rows.length === 0 && <li className="text-xs text-muted-foreground">Just you for now.</li>}
           {rows.map((r) => (
-            <li key={r.id} className="flex items-center justify-between rounded-md border border-border/60 p-2 text-sm">
-              <div className="min-w-0">
-                <div className="truncate font-medium">{r.display_name}</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {r.email ?? ""}
-                  {(r.starts_on || r.ends_on) && ` · ${r.starts_on ?? "start"} → ${r.ends_on ?? "end"}`}
-                  {r.status !== "active" && ` · ${r.status}`}
+            <li key={r.id} className="rounded-md border border-border/60 p-2 text-sm">
+              <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{r.display_name}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {r.email ?? ""}
+                    {r.status !== "active" && ` · ${r.status}`}
+                  </div>
                 </div>
-              </div>
-              {r.status === "active" && (
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {r.role_in_trip !== "owner" && r.email && (
-                    <button onClick={() => resetPwd(r)}
-                      className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
-                      <Lock className="h-3 w-3" /> Reset password
+                {r.status === "active" && (
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {r.role_in_trip !== "owner" && r.email && (
+                      <button onClick={() => resetPwd(r)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+                        <Lock className="h-3 w-3" /> Reset password
+                      </button>
+                    )}
+                    <button onClick={() => remove(r.id)}
+                      className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">
+                      <UserMinus className="h-3 w-3" /> Remove
                     </button>
-                  )}
-                  <button onClick={() => remove(r.id)}
-                    className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">
-                    <UserMinus className="h-3 w-3" /> Remove
+                  </div>
+                )}
+              </div>
+              {/* Presence window: drives which costs this person shares. */}
+              {r.status === "active" && r.role_in_trip !== "owner" && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">On the trip:</span>
+                  <input
+                    type="date"
+                    defaultValue={r.starts_on ?? ""}
+                    onBlur={(e) => { if (e.target.value !== (r.starts_on ?? "")) saveDates(r, e.target.value, r.ends_on ?? ""); }}
+                    className="input h-7 w-[8.5rem] px-1.5 py-0.5 text-xs"
+                  />
+                  <span className="text-muted-foreground">→</span>
+                  <input
+                    type="date"
+                    defaultValue={r.ends_on ?? ""}
+                    onBlur={(e) => { if (e.target.value !== (r.ends_on ?? "")) saveDates(r, r.starts_on ?? "", e.target.value); }}
+                    className="input h-7 w-[8.5rem] px-1.5 py-0.5 text-xs"
+                  />
+                  <span className="text-[11px] text-muted-foreground">empty = whole trip</span>
+                </div>
+              )}
+              {/* App-generated password, owner-visible so forgetters can be rescued. */}
+              {r.starter_password && r.role_in_trip !== "owner" && (
+                <div className="mt-1.5 flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">Login password:</span>
+                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{r.starter_password}</code>
+                  <button
+                    onClick={async () => { try { await navigator.clipboard.writeText(`${r.email ?? ""}\n${r.starter_password}`); } catch {} }}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted">
+                    <Copy className="h-3 w-3" /> Copy
                   </button>
                 </div>
               )}
