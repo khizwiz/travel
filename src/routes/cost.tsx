@@ -356,6 +356,7 @@ function OwnerView() {
           cost={editSplits.cost}
           splits={editSplits.splits}
           members={data.members}
+          payers={payers}
           onClose={() => setEditSplits(null)}
           onSaved={async (perPerson) => {
             await doUpdateSplits({ data: { costId: editSplits.cost.id, perPerson } });
@@ -725,16 +726,47 @@ type PerPersonShare = {
 };
 
 function EditSplitsModal({
-  cost, splits, members, onClose, onSaved,
+  cost, splits, members, payers = [], onClose, onSaved,
 }: {
   cost: any;
   splits: any[];
   members: any[];
+  payers?: { id: string; name: string }[];
   onClose: () => void;
   onSaved: (perPerson: PerPersonShare[]) => Promise<void> | void;
 }) {
   const total = Number(cost.amount_eur);
-  // Seed from existing splits, falling back to equal split across members.
+
+  // Editable rows = every trip member PLUS anyone already in the split
+  // (named payers, legacy keys). The old version rendered members only —
+  // with an empty members list "Split equally" visibly did nothing.
+  const rows = useMemo(() => {
+    const out: { key: string; userId: string | null; participantKey: string | null; label: string }[] = [];
+    const seen = new Set<string>();
+    for (const m of members) {
+      if (!m.user_id || seen.has(m.user_id)) continue;
+      seen.add(m.user_id);
+      out.push({ key: m.user_id, userId: m.user_id, participantKey: null, label: m.display_name ?? m.email ?? "Member" });
+    }
+    for (const s of splits) {
+      const key = s.participant_user_id ?? s.participant_key;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const payerName = typeof key === "string" && key.startsWith("p:")
+        ? payers.find((p) => p.id === key.slice(2))?.name
+        : undefined;
+      out.push({
+        key,
+        userId: s.participant_user_id ?? null,
+        participantKey: s.participant_user_id ? null : key,
+        label: payerName ?? (s.participant_user_id ? "Member" : String(key)),
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cost.id, members.length, splits.length, payers.length]);
+
+  // Seed from existing splits, falling back to equal split across rows.
   const initial = useMemo<Record<string, string>>(() => {
     const map: Record<string, string> = {};
     if (splits.length) {
@@ -743,12 +775,12 @@ function EditSplitsModal({
         map[key] = String(Number(s.share_eur).toFixed(2));
       }
     } else {
-      const share = members.length ? total / members.length : 0;
-      for (const m of members) map[m.user_id] = share.toFixed(2);
+      const share = rows.length ? total / rows.length : 0;
+      for (const r of rows) map[r.key] = share.toFixed(2);
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cost.id]);
+  }, [cost.id, rows.length]);
 
   const [shares, setShares] = useState<Record<string, string>>(initial);
   const [busy, setBusy] = useState(false);
@@ -761,10 +793,10 @@ function EditSplitsModal({
   const diff = total - sum;
 
   function splitEqually() {
-    const n = members.length || 1;
+    const n = rows.length || 1;
     const each = total / n;
     const next: Record<string, string> = {};
-    for (const m of members) next[m.user_id] = each.toFixed(2);
+    for (const r of rows) next[r.key] = each.toFixed(2);
     setShares(next);
   }
 
@@ -776,10 +808,10 @@ function EditSplitsModal({
     }
     setBusy(true);
     try {
-      const perPerson: PerPersonShare[] = members.map((m) => ({
-        userId: m.user_id,
-        participantKey: null,
-        shareEur: parseFloat(shares[m.user_id] ?? "0") || 0,
+      const perPerson: PerPersonShare[] = rows.map((r) => ({
+        userId: r.userId,
+        participantKey: r.participantKey,
+        shareEur: parseFloat(shares[r.key] ?? "0") || 0,
       }));
       await onSaved(perPerson);
     } catch (e: any) {
@@ -800,23 +832,23 @@ function EditSplitsModal({
           Total {fmtEUR(total)} · adjust each share. Must sum to total.
         </div>
         <div className="mt-4 space-y-2">
-          {members.map((m) => (
-            <div key={m.user_id} className="grid grid-cols-[1fr_auto] items-center gap-2">
-              <span className="truncate text-sm">{m.display_name ?? m.email ?? "User"}</span>
+          {rows.map((r) => (
+            <div key={r.key} className="grid grid-cols-[1fr_auto] items-center gap-2">
+              <span className="truncate text-sm">{r.label}</span>
               <div className="flex items-center gap-1">
                 <span className="text-xs text-muted-foreground">€</span>
                 <input
                   type="number"
                   step="0.01"
                   className="input w-28 text-right tabular-nums"
-                  value={shares[m.user_id] ?? "0.00"}
-                  onChange={(e) => setShares({ ...shares, [m.user_id]: e.target.value })}
+                  value={shares[r.key] ?? "0.00"}
+                  onChange={(e) => setShares({ ...shares, [r.key]: e.target.value })}
                 />
               </div>
             </div>
           ))}
-          {members.length === 0 && (
-            <div className="text-xs text-muted-foreground">No members on this trip yet.</div>
+          {rows.length === 0 && (
+            <div className="text-xs text-muted-foreground">Nobody to split with yet — add people on the Travellers page first.</div>
           )}
         </div>
         <div className="mt-3 flex items-center justify-between text-xs">

@@ -308,28 +308,30 @@ export const listCosts = createServerFn({ method: "GET" })
 
     // People list is fetched UNCONDITIONALLY (was gated on costs.length > 0,
     // which made the very first payment impossible on a fresh database).
-    const { data: m } = await supabaseAdmin
+    // Two plain queries instead of a PostgREST relation join — the join
+    // failed silently on some schemas and left everyone unnamed.
+    const { data: m, error: mErr } = await supabaseAdmin
       .from("trip_members")
-      .select("user_id, status, profiles:user_id(display_name, email)")
+      .select("user_id, status")
       .eq("trip_id", data.tripId);
-    const { data: own } = await supabaseAdmin
-      .from("profiles").select("id, display_name, email")
-      .eq("id", t.owner_id).maybeSingle();
-    const seen = new Set<string>();
-    const members: any[] = [];
-    if (own?.id) {
-      seen.add(own.id);
-      members.push({ user_id: own.id, display_name: own.display_name ?? own.email ?? "Owner", email: own.email });
-    }
-    for (const r of (m ?? []) as any[]) {
-      if (!r.user_id || seen.has(r.user_id) || r.status === "revoked") continue;
-      seen.add(r.user_id);
-      members.push({
-        user_id: r.user_id,
-        display_name: r.profiles?.display_name ?? r.profiles?.email ?? "Member",
-        email: r.profiles?.email,
-      });
-    }
+    if (mErr) console.error("[listCosts] trip_members:", mErr.message);
+    const memberIds = Array.from(new Set(
+      [t.owner_id, ...((m ?? []) as any[])
+        .filter((r) => r.user_id && r.status !== "revoked")
+        .map((r) => r.user_id)].filter(Boolean),
+    ));
+    const { data: profs, error: pErr } = await supabaseAdmin
+      .from("profiles").select("id, display_name, email").in("id", memberIds);
+    if (pErr) console.error("[listCosts] profiles:", pErr.message);
+    const profMap = new Map(((profs ?? []) as any[]).map((p) => [p.id, p]));
+    const members = memberIds.map((id) => {
+      const p = profMap.get(id);
+      return {
+        user_id: id,
+        display_name: p?.display_name ?? p?.email ?? (id === t.owner_id ? "Owner" : "Member"),
+        email: p?.email ?? null,
+      };
+    });
     return { isOwner, costs: costs ?? [], splits, members };
   });
 
