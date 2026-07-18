@@ -33,3 +33,4 @@ dist-ssr
 
 # secrets
 .env
+package-lock.json  # bun.lock is canonical; npm lock is local-only

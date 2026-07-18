@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { computeEqualShares } from "./split-math";
 import { z } from "zod";
 
 export const COST_CATEGORIES = [
@@ -148,14 +149,14 @@ async function materialiseSplitsUnified(
     seen.add(k); return true;
   });
   if (unique.length === 0) return;
-  const share = Math.round((amountEur / unique.length) * 100) / 100;
+  const shares = computeEqualShares(amountEur, unique.length);
   await supabase.from("trip_cost_splits").delete().eq("cost_id", costId);
   await supabase.from("trip_cost_splits").insert(
-    unique.map((p) => ({
+    unique.map((p, i) => ({
       cost_id: costId,
       participant_user_id: p.userId,
       participant_key: p.key,
-      share_eur: share,
+      share_eur: shares[i],
     })),
   );
 }
