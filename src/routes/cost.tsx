@@ -37,7 +37,9 @@ function CostPage() {
       </div>
     );
   }
-  return isOwner ? <OwnerView /> : <CompanionView />;
+  // Splitwise model: every member gets the full view (list, splits, balances).
+  // Owner-only moderation actions are enforced server-side.
+  return <OwnerView />;
 }
 
 // ============ OWNER ============
@@ -600,7 +602,7 @@ function AddPaymentModal({
     try {
       const amt = parseFloat(amount);
       if (!amt || amt <= 0) throw new Error("Enter a valid amount");
-      if (isOwner && splitAmong.length === 0) throw new Error("Select at least one person to split between");
+      if (splitAmong.length === 0) throw new Error("Select at least one person to split between");
       let receiptPath: string | null = null;
       if (receiptFile) {
         if (!user) throw new Error("Please sign in again to attach a receipt.");
@@ -618,14 +620,14 @@ function AddPaymentModal({
         receiptPath = path;
       }
       const extra: { paidByUserId?: string | null; payerId?: string | null } = {};
-      if (isOwner && paidBy !== "self") {
+      if (paidBy !== "self") {
         if (paidBy.startsWith("u:")) extra.paidByUserId = paidBy.slice(2);
         else if (paidBy.startsWith("p:")) extra.payerId = paidBy.slice(2);
       }
       await doCreate({ data: {
         tripId, dayDate, amount: amt, currency, category,
         description: description || undefined, receiptPath,
-        ...(isOwner ? { splitAmong } : {}),
+        splitAmong,
         ...extra,
       }});
       onSaved();
@@ -641,7 +643,7 @@ function AddPaymentModal({
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div className="card-elev w-full max-w-md p-5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-xl">{isOwner ? "Add payment" : "Submit payment"}</h2>
+          <h2 className="font-display text-xl">Add payment</h2>
           <button onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="mt-4 grid gap-3">
@@ -664,10 +666,10 @@ function AddPaymentModal({
               {COST_CATEGORIES.map((c) => <option key={c} value={c}>{CAT_LABEL[c]}</option>)}
             </select>
           </Row>
-          {isOwner && (
+          {(
             <Row label="Paid by">
               <select value={paidBy} onChange={(e) => setPaidBy(e.target.value)} className="input">
-                <option value="self">Me (owner)</option>
+                <option value="self">Me</option>
                 {members.filter((m) => m.user_id !== user?.id).map((m) => (
                   <option key={`u:${m.user_id}`} value={`u:${m.user_id}`}>
                     {m.display_name ?? m.email ?? "Member"}
@@ -682,7 +684,7 @@ function AddPaymentModal({
             </Row>
           )}
 
-          {isOwner && (
+          {(
             <Row label="Split between (equal)">
               {allPeople.length === 0 ? (
                 <div className="text-xs text-muted-foreground">
@@ -726,15 +728,10 @@ function AddPaymentModal({
           <Row label="Receipt (optional)">
             <input type="file" accept="image/*,.pdf" onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)} className="text-xs" />
           </Row>
-          {!isOwner && (
-            <div className="rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground">
-              Your submission is sent to Khizar for approval. You won't see totals or other submissions.
-            </div>
-          )}
           {err && <div className="text-sm text-red-600">{err}</div>}
           <button onClick={submit} disabled={busy} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
-            {isOwner ? "Save" : "Submit for approval"}
+            Save
           </button>
         </div>
       </div>

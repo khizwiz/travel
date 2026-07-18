@@ -27,7 +27,7 @@ export const addCostPayer = createServerFn({ method: "POST" })
     z.object({ tripId: z.string().uuid(), name: z.string().trim().min(1).max(80) }).parse(d),
   )
   .handler(async ({ data, context }) => {
-    await ensureOwner(context.supabase, context.userId, data.tripId);
+    // Any trip member may add a payer; RLS ("members add cost_payers") enforces membership.
     const { data: row, error } = await context.supabase
       .from("cost_payers")
       .insert({ trip_id: data.tripId, name: data.name })

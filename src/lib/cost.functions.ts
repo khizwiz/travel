@@ -82,8 +82,9 @@ export const createCost = createServerFn({ method: "POST" })
     const originalAmount = data.currency === "EUR" ? null : data.amount;
     const originalCurrency = data.currency === "EUR" ? null : data.currency;
 
-    const paidBy = isOwner ? (data.paidByUserId ?? (data.payerId ? null : userId)) : userId;
-    const status = isOwner ? "approved" : "pending";
+    // Splitwise model: any member's cost is live immediately; anyone can record who paid.
+    const paidBy = data.paidByUserId ?? (data.payerId ? null : userId);
+    const status = "approved";
 
     const { data: row, error } = await supabase
       .from("trip_costs")
@@ -101,16 +102,14 @@ export const createCost = createServerFn({ method: "POST" })
         receipt_path: data.receiptPath ?? null,
         status,
         created_by: userId,
-        approved_by: isOwner ? userId : null,
-        approved_at: isOwner ? new Date().toISOString() : null,
+        approved_by: userId,
+        approved_at: new Date().toISOString(),
       })
       .select("id").single();
 
     if (error) throw new Error(error.message);
 
-    if (isOwner) {
-      await materialiseSplitsUnified(supabase, row.id, data.tripId, data.dayDate, amountEur, data.splitAmong);
-    }
+    await materialiseSplitsUnified(supabase, row.id, data.tripId, data.dayDate, amountEur, data.splitAmong);
 
     return { id: row.id, status, amountEur };
   });
@@ -257,7 +256,7 @@ export const listCosts = createServerFn({ method: "GET" })
       .from("trips").select("owner_id").eq("id", data.tripId).single()
       .then(({ data: t }) => t?.owner_id === userId);
 
-    // Owner sees everything; companion sees their own only (RLS enforces too).
+    // All trip members see the full list (RLS scopes rows to their trips).
     const sel = supabase
       .from("trip_costs")
       .select("id, day_date, amount_eur, original_amount, original_currency, paid_by, paid_by_label, payer_id, category, description, receipt_path, status, created_by, created_at")
@@ -268,7 +267,7 @@ export const listCosts = createServerFn({ method: "GET" })
 
     let splits: any[] = [];
     let members: any[] = [];
-    if (isOwner && costs && costs.length > 0) {
+    if (costs && costs.length > 0) {
       const ids = costs.map((c: any) => c.id);
       const { data: s } = await supabase
         .from("trip_cost_splits")
@@ -301,8 +300,8 @@ export const computeSettlement = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ tripId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    await ensureOwner(supabase, userId, data.tripId);
+    const { supabase } = context;
+    // Any trip member may view the settlement; RLS scopes rows to their trips.
     const { data: costs } = await supabase
       .from("trip_costs").select("id, amount_eur, paid_by, payer_id")
       .eq("trip_id", data.tripId).eq("status", "approved");
@@ -363,9 +362,10 @@ export const deleteCost = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: c } = await supabase
-      .from("trip_costs").select("id, trip_id").eq("id", data.costId).single();
+      .from("trip_costs").select("id, trip_id, created_by").eq("id", data.costId).single();
     if (!c) throw new Error("Not found");
-    await ensureOwner(supabase, userId, c.trip_id);
+    // Creators may delete their own costs; the owner may delete any.
+    if (c.created_by !== userId) await ensureOwner(supabase, userId, c.trip_id);
     await supabase.from("trip_cost_splits").delete().eq("cost_id", c.id);
     const { error } = await supabase.from("trip_costs").delete().eq("id", c.id);
     if (error) throw new Error(error.message);
