@@ -152,10 +152,11 @@ function OwnerView() {
     for (const [k, v] of byCategory) lines.push(`  ${CAT_LABEL[k] ?? k}: ${fmtEUR(v)}`);
     lines.push("");
     lines.push("Net per person (paid − share):");
-    for (const n of settle.net) lines.push(`  ${memberLabel(n.userId)}: paid ${fmtEUR(n.paid)} · share ${fmtEUR(n.share)} · net ${fmtEUR(n.net)}`);
+    // settle keys are compound ("u:<id>" / "p:<id>") — personLabel handles them.
+    for (const n of settle.net) lines.push(`  ${personLabel(n.userId)}: paid ${fmtEUR(n.paid)} · share ${fmtEUR(n.share)} · net ${fmtEUR(n.net)}`);
     lines.push("");
     lines.push("Settlement:");
-    for (const t of settle.transfers) lines.push(`  ${memberLabel(t.from)} → ${memberLabel(t.to)}: ${fmtEUR(t.amount)}`);
+    for (const t of settle.transfers) lines.push(`  ${personLabel(t.from)} → ${personLabel(t.to)}: ${fmtEUR(t.amount)}`);
     const text = lines.join("\n");
     navigator.clipboard.writeText(text);
     alert("Statement copied to clipboard.");
@@ -623,7 +624,7 @@ function AddPaymentModal({
           )}
 
           {(
-            <Row label="Split between (equal)">
+            <Row label="Split between — tick EVERYONE who shares the cost, including whoever paid">
               {allPeople.length === 0 ? (
                 <div className="text-xs text-muted-foreground">
                   Add travellers or extra payers to split with. For now it goes 100% to whoever paid.
@@ -655,6 +656,18 @@ function AddPaymentModal({
                       </li>
                     ))}
                   </ul>
+                  {/* Foot-gun guard: payer unticked = the others owe them everything. */}
+                  {splitAmong.length > 0 && (() => {
+                    const payerKey = paidBy === "self" ? (user?.id ? `u:${user.id}` : null) : paidBy;
+                    if (payerKey && allPeople.some((p) => p.key === payerKey) && !splitAmong.includes(payerKey)) {
+                      return (
+                        <div className="rounded-md border border-amber-400/60 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                          The payer isn't ticked — they'd owe nothing and be owed the FULL amount. For a half-half split, tick the payer too.
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               )}
             </Row>
