@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { createHash } from "crypto";
-import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
+import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
 
 const LANG_NAMES: Record<string, string> = {
   tr: "Turkish",
@@ -54,11 +54,11 @@ export const translateStrings = createServerFn({ method: "POST" })
       const langName = LANG_NAMES[target] ?? target;
       const prompt = `Translate each of the following short UI strings from English to ${langName}. Preserve punctuation, casing style, emoji, placeholders like {name} or %s, and line breaks. Return ONLY a JSON array of translated strings in the same order, no keys, no commentary.\n\nSTRINGS:\n${JSON.stringify(missing)}`;
       try {
-        const r = await fetch(LOVABLE_AI_URL, {
+        const r = await fetch(aiUrl(), {
           method: "POST",
           headers: lovableAiHeaders(),
           body: JSON.stringify({
-            model: "claude-haiku-4-5",
+            model: aiModel(),
             messages: [
               { role: "system", content: "You are a precise UI translator. Output valid JSON only." },
               { role: "user", content: prompt },

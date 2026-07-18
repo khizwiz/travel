@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
+import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
 
 const TRIP_SLUG = "eu-tripping-2026";
 
@@ -66,11 +66,11 @@ export const suggestReroute = createServerFn({ method: "POST" })
       data.freeText ? `Driver says: "${data.freeText}"` : `Driver has not said where they want to go — suggest 3 sensible options.`,
     ].filter(Boolean).join("\n");
     try {
-      const r = await fetch(LOVABLE_AI_URL, {
+      const r = await fetch(aiUrl(), {
         method: "POST",
         headers: lovableAiHeaders(),
         body: JSON.stringify({
-          model: "claude-haiku-4-5",
+          model: aiModel(),
           messages: [
             { role: "system", content: SYSTEM },
             { role: "user", content: userMsg },

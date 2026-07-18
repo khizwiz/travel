@@ -1,7 +1,7 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { lovableAiHeaders, LOVABLE_AI_URL } from "@/lib/ai-gateway.server";
+import { aiModel, aiUrl, lovableAiHeaders } from "@/lib/ai-gateway.server";
 
 export const DOCUMENT_KINDS = [
   "passport", "visa", "vehicle_reg", "insurance", "employer_letter",
@@ -137,11 +137,11 @@ export const suggestDocumentKind = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(LOVABLE_AI_URL, {
+      const res = await fetch(aiUrl(), {
         method: "POST",
         headers: lovableAiHeaders(),
         body: JSON.stringify({
-          model: "claude-haiku-4-5",
+          model: aiModel(),
           messages: [
             {
               role: "system",

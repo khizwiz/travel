@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { aiModel, aiUrl, lovableAiHeaders } from "@/lib/ai-gateway.server";
 
 /**
  * Daily AI-issued badge cron endpoint.
@@ -41,20 +42,18 @@ export const Route = createFileRoute("/api/public/hooks/daily-badge")({
             ? `Today ${today}: ${day.title ?? ""} (${JSON.stringify(day.leg ?? {})}).`
             : `Today ${today}: no active itinerary day.`;
 
-          const key = process.env.LOVABLE_API_KEY;
+          const key =
+            process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY || process.env.LOVABLE_API_KEY;
           let name = "Another day on the road";
           let description = "Kept the wheels turning.";
-          let icon = "dzZ�";
+          let icon = "🏅";
           if (key) {
             try {
-              const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              const r = await fetch(aiUrl(), {
                 method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Lovable-API-Key": key,
-                },
+                headers: lovableAiHeaders(),
                 body: JSON.stringify({
-                  model: "claude-haiku-4-5",
+                  model: aiModel(),
                   messages: [
                     { role: "system", content:
                       "Invent a tiny playful travel badge for a road-trip journal. Return JSON only: {name, description, icon}. Name 3–5 words, description 1 short sentence, icon a single emoji." },

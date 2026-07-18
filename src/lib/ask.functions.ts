@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
+import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
 
 const SYSTEM = `You are "Ask Tripping", the in-app assistant for the Tripping road-trip journal.
 Trip: Istanbul → across Europe → back to Istanbul, July–August 2026, driven by Khizar (with Simona and their son Fez for parts).
@@ -27,11 +27,11 @@ export const askTripping = createServerFn({ method: "POST" })
         ...(data.context ? [{ role: "system", content: `APP CONTEXT:\n${data.context}` }] : []),
         { role: "user", content: data.question },
       ];
-      const r = await fetch(LOVABLE_AI_URL, {
+      const r = await fetch(aiUrl(), {
         method: "POST",
         headers: lovableAiHeaders(),
         body: JSON.stringify({
-          model: "claude-haiku-4-5",
+          model: aiModel(),
           messages,
           temperature: 0.4,
         }),

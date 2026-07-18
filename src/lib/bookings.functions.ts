@@ -1,6 +1,7 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
 
 const EXTRACT_SCHEMA = {
   type: "object",
@@ -31,9 +32,6 @@ export const extractBooking = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => Input.parse(input))
   .handler(async ({ data, context }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("AI gateway not configured");
-
     if (!data.text && !data.imageDataUrl) {
       throw new Error("Provide booking text or an image.");
     }
@@ -55,7 +53,7 @@ export const extractBooking = createServerFn({ method: "POST" })
     }
 
     const body = {
-      model: "claude-haiku-4-5",
+      model: aiModel(),
       messages: [
         {
           role: "system",
@@ -78,13 +76,9 @@ export const extractBooking = createServerFn({ method: "POST" })
       tool_choice: { type: "function", function: { name: "save_booking" } },
     };
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await fetch(aiUrl(), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Lovable-API-Key": key,
-        "X-Lovable-AIG-SDK": "raw-fetch",
-      },
+      headers: lovableAiHeaders(),
       body: JSON.stringify(body),
     });
 
