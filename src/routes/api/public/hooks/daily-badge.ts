@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 
 /**
  * Daily AI-issued badge cron endpoint.
@@ -6,7 +6,7 @@ import { createFileRoute } from "@tanstack/react-router";
  * pg_cron POSTs here once a day. We pick the current itinerary day, ask
  * Lovable AI to invent a small, playful badge for the moment, insert it
  * into `public.badges`, and award it to the trip owner via `user_badges`.
- * Idempotent per (trip, ISO date) — if today's badge already exists we
+ * Idempotent per (trip, ISO date) â€” if today's badge already exists we
  * return `skipped`.
  */
 export const Route = createFileRoute("/api/public/hooks/daily-badge")({
@@ -44,7 +44,7 @@ export const Route = createFileRoute("/api/public/hooks/daily-badge")({
           const key = process.env.LOVABLE_API_KEY;
           let name = "Another day on the road";
           let description = "Kept the wheels turning.";
-          let icon = "🏅";
+          let icon = "đźŹ…";
           if (key) {
             try {
               const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -54,10 +54,10 @@ export const Route = createFileRoute("/api/public/hooks/daily-badge")({
                   "Lovable-API-Key": key,
                 },
                 body: JSON.stringify({
-                  model: "google/gemini-2.5-flash",
+                  model: "claude-haiku-4-5",
                   messages: [
                     { role: "system", content:
-                      "Invent a tiny playful travel badge for a road-trip journal. Return JSON only: {name, description, icon}. Name 3–5 words, description 1 short sentence, icon a single emoji." },
+                      "Invent a tiny playful travel badge for a road-trip journal. Return JSON only: {name, description, icon}. Name 3â€“5 words, description 1 short sentence, icon a single emoji." },
                     { role: "user", content: context },
                   ],
                   response_format: { type: "json_object" },

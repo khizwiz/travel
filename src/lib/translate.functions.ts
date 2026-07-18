@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+﻿import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
@@ -56,7 +56,7 @@ export const translateStrings = createServerFn({ method: "POST" })
           method: "POST",
           headers: lovableAiHeaders(),
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model: "claude-haiku-4-5",
             messages: [
               { role: "system", content: "You are a precise UI translator. Output valid JSON only." },
               { role: "user", content: prompt },
@@ -81,7 +81,7 @@ export const translateStrings = createServerFn({ method: "POST" })
           }
         }
       } catch {
-        // fall through — untranslated strings return as source
+        // fall through â€” untranslated strings return as source
       }
     }
 

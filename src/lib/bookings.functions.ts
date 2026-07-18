@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+﻿import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
@@ -55,7 +55,7 @@ export const extractBooking = createServerFn({ method: "POST" })
     }
 
     const body = {
-      model: "google/gemini-2.5-flash",
+      model: "claude-haiku-4-5",
       messages: [
         {
           role: "system",

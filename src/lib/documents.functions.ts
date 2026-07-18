@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+﻿import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { lovableAiHeaders, LOVABLE_AI_URL } from "@/lib/ai-gateway.server";
@@ -141,7 +141,7 @@ export const suggestDocumentKind = createServerFn({ method: "POST" })
         method: "POST",
         headers: lovableAiHeaders(),
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+          model: "claude-haiku-4-5",
           messages: [
             {
               role: "system",

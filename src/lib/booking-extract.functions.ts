@@ -1,4 +1,4 @@
-// AI-powered booking extraction for the Open Planning page.
+﻿// AI-powered booking extraction for the Open Planning page.
 // Accepts a small uploaded file (PDF / image / text) and returns structured
 // accommodation fields the planning form can pre-fill. Owner-only.
 
@@ -7,7 +7,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { LOVABLE_AI_URL, lovableAiHeaders } from "./ai-gateway.server";
 
-const MAX_BYTES = 8 * 1024 * 1024; // ~8MB after base64 overhead → matches 6MB raw payload
+const MAX_BYTES = 8 * 1024 * 1024; // ~8MB after base64 overhead â†’ matches 6MB raw payload
 
 const Input = z.object({
   fileDataUrl: z.string().startsWith("data:").max(MAX_BYTES),
@@ -75,7 +75,7 @@ export const extractAccommodation = createServerFn({ method: "POST" })
     }
 
     const body = {
-      model: "google/gemini-2.5-flash",
+      model: "claude-haiku-4-5",
       messages: [
         {
           role: "system",
