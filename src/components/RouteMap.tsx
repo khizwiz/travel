@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import "leaflet/dist/leaflet.css";
 
 interface Point {
   lat: number;
@@ -12,87 +13,18 @@ interface RouteMapProps {
   height?: number;
   /** Optional override of initial zoom when only one point is supplied. */
   singleZoom?: number;
-  /** Number of leading points considered "covered". Polyline up to this index renders solid; the rest dashed. */
+  /** Leading points considered "covered": solid line up to here, dashed after. */
   coveredIndex?: number;
-  /** If true, auto-fit to live + covered points only, leaving the remaining route visible but off-center. */
+  /** If true, auto-fit to live + covered points only. */
   focusCovered?: boolean;
 }
 
-
-declare global {
-  interface Window {
-    google?: any;
-    __initEUTrippingMap?: () => void;
-    __euTrippingMapReady?: boolean;
-  }
-}
-
-const CUSTOM_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
-const MANAGED_KEY = import.meta.env.VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY as
-  | string
-  | undefined;
-const TRACKING_ID = import.meta.env.VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_TRACKING_ID as
-  | string
-  | undefined;
-
-// The custom (Khizar's) key is referrer-restricted to trip.azatfilms.com.
-// The managed Lovable key is restricted to *.lovable.app and *.lovableproject.com.
-// Pick whichever one matches the current hostname so previews and prod both work.
-function pickBrowserKey(): string | undefined {
-  if (typeof window === "undefined") return CUSTOM_KEY ?? MANAGED_KEY;
-  const host = window.location.hostname;
-  const isLovableHost =
-    host.endsWith(".lovable.app") ||
-    host.endsWith(".lovableproject.com") ||
-    host.endsWith(".lovable.dev") ||
-    host === "localhost";
-  if (isLovableHost && MANAGED_KEY) return MANAGED_KEY;
-  return CUSTOM_KEY ?? MANAGED_KEY;
-}
-const BROWSER_KEY = pickBrowserKey();
-
-function loadMapsScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!BROWSER_KEY) {
-      reject(new Error("Map key unavailable"));
-      return;
-    }
-    if (window.__euTrippingMapReady && window.google?.maps) {
-      resolve();
-      return;
-    }
-    const existing = document.getElementById("eu-tripping-maps-js");
-    if (existing) {
-      const check = setInterval(() => {
-        if (window.__euTrippingMapReady && window.google?.maps) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 100);
-      return;
-    }
-    window.__initEUTrippingMap = () => {
-      window.__euTrippingMapReady = true;
-    };
-    const s = document.createElement("script");
-    s.id = "eu-tripping-maps-js";
-    s.async = true;
-    const channel = TRACKING_ID ? `&channel=${TRACKING_ID}` : "";
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${BROWSER_KEY}&loading=async&callback=__initEUTrippingMap${channel}`;
-    s.onerror = () => reject(new Error("Map script failed to load"));
-    document.head.appendChild(s);
-    const check = setInterval(() => {
-      if (window.__euTrippingMapReady && window.google?.maps) {
-        clearInterval(check);
-        resolve();
-      }
-    }, 100);
-    setTimeout(() => {
-      clearInterval(check);
-      if (!window.__euTrippingMapReady) reject(new Error("Map load timeout"));
-    }, 15000);
-  });
-}
+// Free, key-less map stack: Leaflet + OpenStreetMap data via CARTO dark tiles.
+// Replaces the Google Maps setup whose browser keys were referrer-locked to
+// domains this deployment does not control.
+const TILE_URL = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const TILE_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 export function RouteMap({
   points,
@@ -105,148 +37,94 @@ export function RouteMap({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!BROWSER_KEY) {
-      setError("Map provider not configured.");
-      return;
-    }
-    if (points.length === 0) return;
+    if (points.length === 0 || !ref.current) return;
     let cancelled = false;
-    loadMapsScript()
-      .then(() => {
-        if (cancelled || !ref.current || !window.google?.maps) return;
-        const g = window.google.maps;
+    let map: import("leaflet").Map | undefined;
+    (async () => {
+      try {
+        const L = (await import("leaflet")).default;
+        if (cancelled || !ref.current) return;
+        map = L.map(ref.current, { zoomControl: true, attributionControl: true });
+        L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+
         const routePoints = points.filter((p) => !p.accent);
         const accentPoints = points.filter((p) => p.accent);
-        const bounds = new g.LatLngBounds();
-        points.forEach((p) => bounds.extend({ lat: p.lat, lng: p.lng }));
-        const map = new g.Map(ref.current, {
-          center: bounds.getCenter(),
-          zoom: singleZoom,
-          disableDefaultUI: true,
-          zoomControl: true,
-          styles: [
-            { elementType: "geometry", stylers: [{ color: "#1d2027" }] },
-            { elementType: "labels.text.stroke", stylers: [{ color: "#1d2027" }] },
-            { elementType: "labels.text.fill", stylers: [{ color: "#9aa4b2" }] },
-            { featureType: "water", stylers: [{ color: "#0e1116" }] },
-            { featureType: "road", stylers: [{ color: "#2a2f38" }] },
-            { featureType: "poi", stylers: [{ visibility: "off" }] },
-          ],
-        });
         const covered = typeof coveredIndex === "number"
           ? Math.max(0, Math.min(routePoints.length, coveredIndex))
           : routePoints.length;
+
         routePoints.forEach((p, i) => {
           const isCovered = i < covered;
-          new g.Marker({
-            position: { lat: p.lat, lng: p.lng },
-            map,
+          const bg = isCovered ? "#22c55e" : "#7aa2f7";
+          const opacity = isCovered ? 0.95 : 0.6;
+          L.marker([p.lat, p.lng], {
             title: p.label ?? `Point ${i + 1}`,
-            label: {
-              text: String(i + 1),
-              color: "#fff",
-              fontSize: "11px",
-            },
-            icon: {
-              path: g.SymbolPath.CIRCLE,
-              scale: 11,
-              fillColor: isCovered ? "#22c55e" : "#7aa2f7",
-              fillOpacity: isCovered ? 0.95 : 0.45,
-              strokeColor: "#ffffff",
-              strokeWeight: 1.5,
-            },
-          });
+            icon: L.divIcon({
+              className: "",
+              iconSize: [22, 22],
+              iconAnchor: [11, 11],
+              html: `<div style="width:22px;height:22px;border-radius:50%;background:${bg};opacity:${opacity};border:1.5px solid #fff;color:#fff;font-size:11px;line-height:19px;text-align:center;font-weight:600;">${i + 1}</div>`,
+            }),
+          }).addTo(map!);
         });
+
         accentPoints.forEach((p) => {
-          new g.Marker({
-            position: { lat: p.lat, lng: p.lng },
-            map,
-            title: p.label ?? "Live",
-            icon: {
-              path: g.SymbolPath.CIRCLE,
-              scale: 8,
-              fillColor: "#22c55e",
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2,
-            },
-            zIndex: 999,
-          });
-          new g.Circle({
-            map,
-            center: { lat: p.lat, lng: p.lng },
-            radius: 800,
-            strokeColor: "#22c55e",
-            strokeOpacity: 0.5,
-            strokeWeight: 1,
-            fillColor: "#22c55e",
-            fillOpacity: 0.12,
-          });
+          L.circleMarker([p.lat, p.lng], {
+            radius: 8, color: "#ffffff", weight: 2,
+            fillColor: "#22c55e", fillOpacity: 1,
+          }).addTo(map!).bindTooltip(p.label ?? "Live");
+          L.circle([p.lat, p.lng], {
+            radius: 800, color: "#22c55e", opacity: 0.5, weight: 1,
+            fillColor: "#22c55e", fillOpacity: 0.12,
+          }).addTo(map!);
         });
-        if (routePoints.length > 1) {
-          const path = routePoints.map((p) => ({ lat: p.lat, lng: p.lng }));
+
+        const path = routePoints.map((p) => [p.lat, p.lng] as [number, number]);
+        if (path.length > 1) {
           if (covered > 1) {
-            new g.Polyline({
-              path: path.slice(0, covered),
-              map,
-              strokeColor: "#22c55e",
-              strokeOpacity: 0.95,
-              strokeWeight: 4,
-            });
+            L.polyline(path.slice(0, covered), {
+              color: "#22c55e", opacity: 0.95, weight: 4,
+            }).addTo(map!);
           }
           if (covered < path.length) {
-            const startIdx = Math.max(0, covered - 1);
-            new g.Polyline({
-              path: path.slice(startIdx),
-              map,
-              strokeColor: "#7aa2f7",
-              strokeOpacity: 0.6,
-              strokeWeight: 3,
-              icons: [
-                {
-                  icon: { path: "M 0,-1 0,1", strokeOpacity: 0.9, scale: 3 },
-                  offset: "0",
-                  repeat: "12px",
-                },
-              ],
-            });
+            L.polyline(path.slice(Math.max(0, covered - 1)), {
+              color: "#7aa2f7", opacity: 0.6, weight: 3, dashArray: "4 10",
+            }).addTo(map!);
           }
         }
-        if (focusCovered) {
-          const focusBounds = new g.LatLngBounds();
-          routePoints.slice(0, Math.max(1, covered)).forEach((p) =>
-            focusBounds.extend({ lat: p.lat, lng: p.lng }),
-          );
-          accentPoints.forEach((p) => focusBounds.extend({ lat: p.lat, lng: p.lng }));
-          if (!focusBounds.isEmpty()) map.fitBounds(focusBounds, 60);
-        } else if (points.length > 1) {
-          map.fitBounds(bounds, 40);
-        }
 
-      })
-      .catch((e) => setError(e?.message ?? "Map failed to load"));
+        const focusPts = focusCovered
+          ? [...routePoints.slice(0, Math.max(covered, 1)), ...accentPoints]
+          : points;
+        const fitTo = focusPts.length > 0 ? focusPts : points;
+        if (fitTo.length === 1) {
+          map.setView([fitTo[0].lat, fitTo[0].lng], singleZoom);
+        } else {
+          map.fitBounds(
+            L.latLngBounds(fitTo.map((p) => [p.lat, p.lng] as [number, number])),
+            { padding: [24, 24] },
+          );
+        }
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message ?? "Map failed to load");
+      }
+    })();
     return () => {
       cancelled = true;
+      map?.remove();
     };
-  }, [points, singleZoom]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(points), coveredIndex, focusCovered, singleZoom]);
 
   if (error) {
     return (
       <div
-        className="grid place-items-center overflow-hidden rounded-xl border border-border bg-background/50 text-sm text-muted-foreground"
         style={{ height }}
+        className="grid place-items-center rounded-xl border border-border text-xs text-muted-foreground"
       >
         {error}
       </div>
     );
   }
-
-  return (
-    <div
-      ref={ref}
-      className="overflow-hidden rounded-xl border border-border bg-background/50"
-      style={{ height }}
-      aria-label="Route map"
-    />
-  );
+  return <div ref={ref} style={{ height }} className="w-full overflow-hidden rounded-xl" />;
 }
