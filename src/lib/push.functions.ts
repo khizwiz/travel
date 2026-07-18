@@ -2,7 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
-const VAPID_SUBJECT = "mailto:owner@example.com";
+function vapidSubject(): string {
+  return `mailto:${process.env.OWNER_EMAIL ?? "owner@example.com"}`;
+}
 
 interface VapidKeys {
   publicKey: string;
@@ -101,7 +103,7 @@ export const sendTestPushToMe = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const keys = await loadOrCreateVapid();
     const webpush = (await import("web-push")).default;
-    webpush.setVapidDetails(VAPID_SUBJECT, keys.publicKey, keys.privateKey);
+    webpush.setVapidDetails(vapidSubject(), keys.publicKey, keys.privateKey);
 
     const { data: subs, error } = await context.supabase
       .from("push_subscriptions")

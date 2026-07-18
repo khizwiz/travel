@@ -262,7 +262,7 @@ export const ensureSimonaInvitation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
-    const SIMONA_EMAIL = "member1@example.com";
+    const SIMONA_EMAIL = process.env.SIMONA_EMAIL ?? "member1@example.com";
 
     const { data: trip } = await supabase
       .from("trips").select("id, owner_id, starts_on, ends_on")

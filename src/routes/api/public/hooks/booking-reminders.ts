@@ -63,7 +63,7 @@ export const Route = createFileRoute("/api/public/hooks/booking-reminders")({
           if (!subs || subs.length === 0) return json({ ok: true, sent: 0, note: "no subs" });
 
           const webpush = (await import("web-push")).default;
-          webpush.setVapidDetails("mailto:owner@example.com", keys.publicKey, keys.privateKey);
+          webpush.setVapidDetails(`mailto:${process.env.OWNER_EMAIL ?? "owner@example.com"}`, keys.publicKey, keys.privateKey);
 
           let sent = 0;
           const errors: string[] = [];

@@ -3,9 +3,19 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
-const OWNER_EMAIL = "owner@example.com";
-const CREW_EMAIL = "miezko@tripping.local";
+const OWNER_EMAIL_FALLBACK = "owner@example.com";
+const CREW_EMAIL_FALLBACK = "miezko@tripping.local";
 const CREW_END_DATE = "2026-07-21";
+
+// Identity comes from env so each deployment (friend's prod, user's sandbox)
+// can point at its own owner/crew accounts without code changes.
+function ownerEmail(): string {
+  return process.env.OWNER_EMAIL ?? OWNER_EMAIL_FALLBACK;
+}
+
+function crewEmail(): string {
+  return process.env.CREW_EMAIL ?? CREW_EMAIL_FALLBACK;
+}
 
 export type AdminRole = "owner" | "crew";
 
@@ -72,7 +82,7 @@ export const verifyAdminPassword = createServerFn({ method: "POST" })
     if (!role) throw new Error("Wrong password.");
 
     if (role === "owner") {
-      const { userId, supabaseAdmin } = await provisionUser(OWNER_EMAIL, data.password, "Khizar");
+      const { userId, supabaseAdmin } = await provisionUser(ownerEmail(), data.password, "Khizar");
       await supabaseAdmin
         .from("user_roles")
         .upsert({ user_id: userId, role: "owner" }, { onConflict: "user_id,role" });
@@ -83,12 +93,12 @@ export const verifyAdminPassword = createServerFn({ method: "POST" })
         role: "owner" as const,
         token: `${payload}.${sign(payload)}`,
         expiresAt: exp,
-        supabaseEmail: OWNER_EMAIL,
+        supabaseEmail: ownerEmail(),
       };
     }
 
     // Crew: Miezko — passenger with admin UI except bookings/documents/settings.
-    const { userId, supabaseAdmin } = await provisionUser(CREW_EMAIL, data.password, "Miezko");
+    const { userId, supabaseAdmin } = await provisionUser(crewEmail(), data.password, "Miezko");
     // Grant 'owner' app-role so has_role() / is_owner() checks pass for admin-style writes.
     await supabaseAdmin
       .from("user_roles")
@@ -121,7 +131,7 @@ export const verifyAdminPassword = createServerFn({ method: "POST" })
       role: "crew" as const,
       token: `${payload}.${sign(payload)}`,
       expiresAt: exp,
-      supabaseEmail: CREW_EMAIL,
+      supabaseEmail: crewEmail(),
     };
   });
 
