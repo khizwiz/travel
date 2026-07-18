@@ -151,10 +151,33 @@ async function materialiseSplitsUnified(
       else if (raw.startsWith("k:")) entries.push({ userId: null, key: raw.slice(2) });
     }
   } else {
-    const trav = await dayTravellers(supabase, tripId, day);
-    entries = trav
-      .filter((t) => !(t.child_key && t.child_key === "fez"))
-      .map((t) => ({ userId: t.user_id, key: t.child_key }));
+    // Default: split equally between everyone PRESENT on that day.
+    // A member who joined for one week of a two-week trip only shares costs
+    // from days inside their starts_on..ends_on window; the owner is always on.
+    // Roster is read via the service role so member-created costs split
+    // correctly too (RLS hides co-members from non-owners).
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: t } = await supabaseAdmin
+      .from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+    const { data: roster } = await supabaseAdmin
+      .from("trip_members")
+      .select("user_id, status, starts_on, ends_on")
+      .eq("trip_id", tripId);
+    const presentIds = new Set<string>();
+    if (t?.owner_id) presentIds.add(t.owner_id);
+    for (const r of (roster ?? []) as any[]) {
+      if (!r.user_id || r.status !== "active") continue;
+      if (r.starts_on && r.starts_on > day) continue;
+      if (r.ends_on && r.ends_on < day) continue;
+      presentIds.add(r.user_id);
+    }
+    entries = Array.from(presentIds).map((id) => ({ userId: id, key: null }));
+    // Named payers (no accounts) always share — they have no date window.
+    const { data: extraPayers } = await supabaseAdmin
+      .from("cost_payers").select("id").eq("trip_id", tripId);
+    for (const p of (extraPayers ?? []) as any[]) {
+      entries.push({ userId: null, key: `p:${p.id}` });
+    }
     if (entries.length === 0) {
       const { data: c } = await supabase.from("trip_costs").select("paid_by, payer_id").eq("id", costId).single();
       if (c?.paid_by) entries = [{ userId: c.paid_by, key: null }];
@@ -312,9 +335,10 @@ export const listCosts = createServerFn({ method: "GET" })
     // failed silently on some schemas and left everyone unnamed.
     const { data: m, error: mErr } = await supabaseAdmin
       .from("trip_members")
-      .select("user_id, status")
+      .select("user_id, status, starts_on, ends_on")
       .eq("trip_id", data.tripId);
     if (mErr) console.error("[listCosts] trip_members:", mErr.message);
+    const rowsByUser = new Map(((m ?? []) as any[]).filter((r) => r.user_id).map((r) => [r.user_id, r]));
     const memberIds = Array.from(new Set(
       [t.owner_id, ...((m ?? []) as any[])
         .filter((r) => r.user_id && r.status !== "revoked")
@@ -326,10 +350,15 @@ export const listCosts = createServerFn({ method: "GET" })
     const profMap = new Map(((profs ?? []) as any[]).map((p) => [p.id, p]));
     const members = memberIds.map((id) => {
       const p = profMap.get(id);
+      const row = id === t.owner_id ? null : rowsByUser.get(id);
       return {
         user_id: id,
         display_name: p?.display_name ?? p?.email ?? (id === t.owner_id ? "Owner" : "Member"),
         email: p?.email ?? null,
+        // Presence window: the owner is on the whole trip; members follow
+        // their invite dates. Splits only include people present that day.
+        starts_on: row?.starts_on ?? null,
+        ends_on: row?.ends_on ?? null,
       };
     });
     return { isOwner, costs: costs ?? [], splits, members };

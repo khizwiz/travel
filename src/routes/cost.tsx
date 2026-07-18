@@ -446,7 +446,7 @@ function AddPaymentModal({
   tripId: string; isOwner: boolean;
   onClose: () => void; onSaved: () => void;
   doCreate: ReturnType<typeof useServerFn<typeof createCost>>;
-  members?: { user_id: string; display_name?: string; email?: string }[];
+  members?: { user_id: string; display_name?: string; email?: string; starts_on?: string | null; ends_on?: string | null }[];
   payers?: { id: string; name: string }[];
 }) {
   const { user } = useAuth();
@@ -503,8 +503,26 @@ function AddPaymentModal({
     return list;
   }, [members, payers, user?.id]);
 
-  // Always split equally between everyone on the trip — no picking, no modals.
-  const splitAmong = allPeople.map((p) => p.key);
+  // Split = everyone PRESENT on the selected day (members follow their
+  // invite date window; a one-week guest doesn't share week-two costs).
+  // The server computes the authoritative list; this mirrors it for preview.
+  const presentPeople = useMemo(() => {
+    const out: { key: string; label: string }[] = [];
+    for (const m of members) {
+      if (m.starts_on && m.starts_on > dayDate) continue;
+      if (m.ends_on && m.ends_on < dayDate) continue;
+      out.push({
+        key: `u:${m.user_id}`,
+        label: m.user_id === user?.id ? `${m.display_name ?? "Me"} (me)` : (m.display_name ?? m.email ?? "Member"),
+      });
+    }
+    for (const p of payers) out.push({ key: `p:${p.id}`, label: p.name });
+    return out;
+  }, [members, payers, dayDate, user?.id]);
+  const absentPeople = useMemo(
+    () => members.filter((m) => (m.starts_on && m.starts_on > dayDate) || (m.ends_on && m.ends_on < dayDate)),
+    [members, dayDate],
+  );
 
 
   async function submit() {
@@ -538,7 +556,8 @@ function AddPaymentModal({
       await doCreate({ data: {
         tripId, dayDate, amount: amt, currency, category,
         description: description || undefined, receiptPath,
-        splitAmong,
+        // splitAmong deliberately omitted: the server splits equally between
+        // everyone present on dayDate (date-window aware).
         ...extra,
       }});
       onSaved();
@@ -594,18 +613,23 @@ function AddPaymentModal({
           )}
 
           <Row label="Split">
-            {allPeople.length === 0 ? (
+            {presentPeople.length === 0 ? (
               <div className="text-xs text-muted-foreground">
                 Just you for now — the cost goes 100% to whoever paid. Add people on the Travellers page to share costs.
               </div>
             ) : (
               <div className="rounded-md border border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
-                Split equally between {allPeople.length}:{" "}
-                <span className="text-foreground">{allPeople.map((p) => p.label).join(", ")}</span>
+                Split equally between the {presentPeople.length} on the trip that day:{" "}
+                <span className="text-foreground">{presentPeople.map((p) => p.label).join(", ")}</span>
                 {amount && parseFloat(amount) > 0 && (
                   <span className="ml-1 font-mono text-foreground">
-                    — {fmtEUR((parseFloat(amount) || 0) / allPeople.length)} each
+                    — {fmtEUR((parseFloat(amount) || 0) / presentPeople.length)} each
                   </span>
+                )}
+                {absentPeople.length > 0 && (
+                  <div className="mt-1 text-[11px]">
+                    Not counted (absent on {dayDate}): {absentPeople.map((m) => m.display_name ?? m.email ?? "Member").join(", ")}
+                  </div>
                 )}
               </div>
             )}
