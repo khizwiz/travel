@@ -175,10 +175,11 @@ export const getInvitationPublic = createServerFn({ method: "GET" })
       .eq("friendly_slug", data.slug)
       .maybeSingle();
     if (!inv) return { found: false as const };
+    // Public lookup by guessable slug: never expose the invitee's email.
     return {
       found: true as const,
       name: inv.name,
-      email: inv.email,
+      email: null as string | null,
       expiresAt: inv.expires_at,
       acceptedAt: inv.accepted_at,
       revokedAt: inv.revoked_at,

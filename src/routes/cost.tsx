@@ -6,9 +6,10 @@ import { useAuth } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { getDefaultTrip } from "@/lib/access.functions";
 import {
-  COST_CATEGORIES, addTraveller, approveCost, computeSettlement, createCost, createCostShareSnapshot,
+  COST_CATEGORIES, COST_CURRENCIES, addTraveller, approveCost, computeSettlement, createCost, createCostShareSnapshot,
   deleteCost, listCosts, listTravellers, rejectCost, removeTraveller, resetMemberPassword, updateCostAmounts,
 } from "@/lib/cost.functions";
+import { extractReceipt } from "@/lib/receipt.functions";
 import { addCostPayer, listCostPayers, removeCostPayer } from "@/lib/cost-payers.functions";
 import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { TravellersManager } from "@/components/TravellersManager";
@@ -26,6 +27,19 @@ const CAT_LABEL: Record<string, string> = {
 
 function fmtEUR(n: number) {
   return new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(n);
+}
+
+// Downscale a photo client-side so the AI receipt scan stays small and fast.
+async function downscaleToDataUrl(file: File, maxDim = 1280): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", 0.8);
 }
 
 function CostPage() {
@@ -46,6 +60,7 @@ function CostPage() {
 
 // ============ OWNER ============
 function OwnerView() {
+  const { user: authUser } = useAuth();
   const fetchTrip = useServerFn(getDefaultTrip);
   const fetchList = useServerFn(listCosts);
   const fetchSettle = useServerFn(computeSettlement);
@@ -170,33 +185,37 @@ function OwnerView() {
           <button onClick={exportStatement} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-muted">
             <Copy className="h-3.5 w-3.5" /> Copy statement
           </button>
-          <button
-            disabled={busyShare || !tripId}
-            onClick={async () => {
-              if (!tripId) return;
-              setBusyShare(true);
-              try {
-                const { token } = await doCreateShare({ data: { tripId } });
-                const url = `${window.location.origin}/cost/share/${token}`;
-                setShareUrl(url);
-                try { await navigator.clipboard.writeText(url); } catch {}
-              } catch (e: any) {
-                alert(e?.message ?? "Failed to create share link.");
-              } finally {
-                setBusyShare(false);
-              }
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-60"
-          >
-            {busyShare ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
-            Share owed-sheet
-          </button>
-          <button
-            onClick={() => setShowTravellers(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-muted"
-          >
-            <Users className="h-3.5 w-3.5" /> Travellers
-          </button>
+          {data.isOwner && (
+            <>
+              <button
+                disabled={busyShare || !tripId}
+                onClick={async () => {
+                  if (!tripId) return;
+                  setBusyShare(true);
+                  try {
+                    const { token } = await doCreateShare({ data: { tripId } });
+                    const url = `${window.location.origin}/cost/share/${token}`;
+                    setShareUrl(url);
+                    try { await navigator.clipboard.writeText(url); } catch {}
+                  } catch (e: any) {
+                    alert(e?.message ?? "Failed to create share link.");
+                  } finally {
+                    setBusyShare(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-60"
+              >
+                {busyShare ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+                Share owed-sheet
+              </button>
+              <button
+                onClick={() => setShowTravellers(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-muted"
+              >
+                <Users className="h-3.5 w-3.5" /> Travellers
+              </button>
+            </>
+          )}
         </div>
         {shareUrl && (
           <div className="mt-3 rounded-lg border border-border bg-muted/30 p-2 text-xs">
@@ -210,7 +229,7 @@ function OwnerView() {
 
 
 
-      {pending.length > 0 && (
+      {data.isOwner && pending.length > 0 && (
         <section className="card-elev p-4">
           <div className="text-sm font-semibold">Pending traveller submissions ({pending.length})</div>
           <ul className="mt-3 space-y-2">
@@ -225,11 +244,11 @@ function OwnerView() {
                   <div className="mt-1 text-xs text-muted-foreground">Original: {c.original_amount} {c.original_currency}</div>
                 )}
                 <div className="mt-2 flex gap-2">
-                  <button onClick={async () => { await doApprove({ data: { costId: c.id } }); refresh(); }}
+                  <button onClick={async () => { try { await doApprove({ data: { costId: c.id } }); refresh(); } catch (e: any) { alert(e?.message ?? "Failed"); } }}
                     className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs text-white">
                     <Check className="h-3.5 w-3.5" /> Approve
                   </button>
-                  <button onClick={async () => { await doReject({ data: { costId: c.id } }); refresh(); }}
+                  <button onClick={async () => { try { await doReject({ data: { costId: c.id } }); refresh(); } catch (e: any) { alert(e?.message ?? "Failed"); } }}
                     className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-muted">
                     <X className="h-3.5 w-3.5" /> Reject
                   </button>
@@ -290,22 +309,26 @@ function OwnerView() {
                 {c.description && <div className="mt-1 text-xs text-muted-foreground">{c.description}</div>}
                 <div className="mt-1 text-[11px] text-muted-foreground">{splitSummary}</div>
                 <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={() => setEditSplits({ cost: c, splits })}
-                    className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
-                  >
-                    <Edit3 className="h-3 w-3" /> Edit splits
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!confirm(`Delete this ${fmtEUR(Number(c.amount_eur))} payment?`)) return;
-                      await doDelete({ data: { costId: c.id } });
-                      refresh();
-                    }}
-                    className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                  >
-                    <Trash2 className="h-3 w-3" /> Delete
-                  </button>
+                  {data.isOwner && (
+                    <button
+                      onClick={() => setEditSplits({ cost: c, splits })}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                    >
+                      <Edit3 className="h-3 w-3" /> Edit splits
+                    </button>
+                  )}
+                  {(data.isOwner || c.created_by === authUser?.id) && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Delete this ${fmtEUR(Number(c.amount_eur))} payment?`)) return;
+                        try { await doDelete({ data: { costId: c.id } }); refresh(); }
+                        catch (e: any) { alert(e?.message ?? "Failed to delete"); }
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-3 w-3" /> Delete
+                    </button>
+                  )}
                 </div>
               </li>
             );
@@ -317,7 +340,7 @@ function OwnerView() {
       {showAdd && tripId && (
         <AddPaymentModal
           tripId={tripId}
-          isOwner
+          isOwner={data.isOwner}
           members={data.members}
           payers={payers}
           onClose={() => setShowAdd(false)}
@@ -459,6 +482,34 @@ function AddPaymentModal({
   const [paidBy, setPaidBy] = useState<string>("self");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const doExtract = useServerFn(extractReceipt);
+  const [scanning, setScanning] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
+
+  // AI receipt scan: reads the photo, prefills amount/currency/category/description.
+  async function scanReceipt(file: File) {
+    setScanning(true);
+    setScanNote(null);
+    try {
+      const imageDataUrl = await downscaleToDataUrl(file);
+      const res: any = await doExtract({ data: { imageDataUrl } });
+      if (res?.error) { setScanNote(res.error); return; }
+      if (res?.amount) {
+        setAmount(String(res.amount));
+        if (res.currency) setCurrency(res.currency);
+        if (res.category) setCategory(res.category);
+        if (res.description && !description) setDescription(res.description);
+        if (res.date) setDayDate(res.date);
+        setScanNote(
+          `Read ${res.amount} ${res.currency ?? ""}${res.currencyNote ? ` — ${res.currencyNote}` : " — check before saving."}`,
+        );
+      }
+    } catch (e: any) {
+      setScanNote(e?.message ?? "Scan failed — enter the amount manually.");
+    } finally {
+      setScanning(false);
+    }
+  }
 
   // All possible people to split between. Owner shows only for isOwner scenarios.
   const allPeople = useMemo(() => {
@@ -489,7 +540,9 @@ function AddPaymentModal({
     try {
       const amt = parseFloat(amount);
       if (!amt || amt <= 0) throw new Error("Enter a valid amount");
-      if (splitAmong.length === 0) throw new Error("Select at least one person to split between");
+      // With nobody to pick yet (fresh trip), the server assigns the cost
+      // 100% to whoever paid — matching the on-screen note.
+      if (splitAmong.length === 0 && allPeople.length > 0) throw new Error("Select at least one person to split between");
       let receiptPath: string | null = null;
       if (receiptFile) {
         if (!user) throw new Error("Please sign in again to attach a receipt.");
@@ -541,9 +594,7 @@ function AddPaymentModal({
             <div className="flex gap-2">
               <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="input flex-1" />
               <select value={currency} onChange={(e) => setCurrency(e.target.value as any)} className="input w-24">
-                <option value="EUR">EUR</option>
-                <option value="USD">USD</option>
-                <option value="TRY">TRY</option>
+                {COST_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             {currency !== "EUR" && <div className="mt-1 text-xs text-muted-foreground">Converted to EUR using today's rate.</div>}
@@ -613,7 +664,25 @@ function AddPaymentModal({
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="input" maxLength={500} />
           </Row>
           <Row label="Receipt (optional)">
-            <input type="file" accept="image/*,.pdf" onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)} className="text-xs" />
+            <input
+              type="file"
+              accept="image/*,.pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                setReceiptFile(f);
+                // Photos get scanned automatically; PDFs are attach-only.
+                if (f && f.type.startsWith("image/")) scanReceipt(f);
+              }}
+              className="text-xs"
+            />
+            {scanning && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading the receipt…
+              </div>
+            )}
+            {scanNote && !scanning && (
+              <div className="mt-1.5 text-xs text-muted-foreground">{scanNote}</div>
+            )}
           </Row>
           {err && <div className="text-sm text-red-600">{err}</div>}
           <button onClick={submit} disabled={busy} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60">

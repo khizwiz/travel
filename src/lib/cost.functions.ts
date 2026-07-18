@@ -11,22 +11,41 @@ export const COST_CATEGORIES = [
 const fxCache = new Map<string, { rate: number; at: number }>();
 const FX_TTL_MS = 6 * 60 * 60 * 1000;
 
+// Balkan currencies the ECB feed doesn't carry — approximate but stable
+// (RSD/BAM are managed/pegged): used only when the live lookup can't help.
+const FX_FALLBACK_TO_EUR: Record<string, number> = {
+  RSD: 1 / 117.2, // Serbian dinar
+  BAM: 1 / 1.95583, // Bosnian mark (fixed peg)
+  MKD: 1 / 61.6, // Macedonian denar
+  ALL: 1 / 99, // Albanian lek
+};
+
 async function fetchFxToEur(from: string): Promise<number> {
   const key = from.toUpperCase();
   if (key === "EUR") return 1;
   const cached = fxCache.get(key);
   if (cached && Date.now() - cached.at < FX_TTL_MS) return cached.rate;
-  const res = await fetch(`https://api.frankfurter.app/latest?from=${key}&to=EUR`);
-  if (!res.ok) throw new Error(`FX lookup failed (${res.status})`);
-  const json = await res.json() as { rates?: { EUR?: number } };
-  const rate = json.rates?.EUR;
-  if (!rate || !isFinite(rate)) throw new Error("FX response invalid");
-  fxCache.set(key, { rate, at: Date.now() });
-  return rate;
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${key}&to=EUR`);
+    if (!res.ok) throw new Error(`FX lookup failed (${res.status})`);
+    const json = await res.json() as { rates?: { EUR?: number } };
+    const rate = json.rates?.EUR;
+    if (!rate || !isFinite(rate)) throw new Error("FX response invalid");
+    fxCache.set(key, { rate, at: Date.now() });
+    return rate;
+  } catch (e) {
+    const fallback = FX_FALLBACK_TO_EUR[key];
+    if (fallback) return fallback;
+    throw e;
+  }
 }
 
+export const COST_CURRENCIES = [
+  "EUR", "USD", "TRY", "BGN", "RON", "HUF", "CZK", "PLN", "CHF", "RSD", "BAM", "MKD", "ALL",
+] as const;
+
 export const getFxRate = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => z.object({ from: z.enum(["EUR", "USD", "TRY"]) }).parse(d))
+  .inputValidator((d: unknown) => z.object({ from: z.enum(COST_CURRENCIES) }).parse(d))
   .handler(async ({ data }) => ({ from: data.from, toEur: await fetchFxToEur(data.from) }));
 
 // ---------- Helpers ----------
@@ -57,7 +76,7 @@ const createInput = z.object({
   tripId: z.string().uuid(),
   dayDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   amount: z.number().positive().max(1_000_000),
-  currency: z.enum(["EUR", "USD", "TRY"]).default("EUR"),
+  currency: z.enum(COST_CURRENCIES).default("EUR"),
   paidByUserId: z.string().uuid().nullable().optional(),
   paidByLabel: z.string().trim().max(60).optional(),
   payerId: z.string().uuid().nullable().optional(),
@@ -253,21 +272,31 @@ export const listCosts = createServerFn({ method: "GET" })
   .inputValidator((d: unknown) => z.object({ tripId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const isOwner = await context.supabase
-      .from("trips").select("owner_id").eq("id", data.tripId).single()
-      .then(({ data: t }) => t?.owner_id === userId);
+    // Service-role for the people list: RLS hides co-members' profile rows
+    // from non-owners, which made every other traveller render as "Member".
+    // Access is still verified — the caller must be the owner or a member.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: t } = await supabaseAdmin
+      .from("trips").select("owner_id").eq("id", data.tripId).maybeSingle();
+    if (!t) throw new Error("Trip not found");
+    const isOwner = t.owner_id === userId;
+    if (!isOwner) {
+      const { data: mem } = await supabaseAdmin
+        .from("trip_members").select("id")
+        .eq("trip_id", data.tripId).eq("user_id", userId).eq("status", "active")
+        .maybeSingle();
+      if (!mem) throw new Error("Not a member of this trip");
+    }
 
-    // All trip members see the full list (RLS scopes rows to their trips).
-    const sel = supabase
+    // Costs & splits stay under the caller's own RLS.
+    const { data: costs, error } = await supabase
       .from("trip_costs")
       .select("id, day_date, amount_eur, original_amount, original_currency, paid_by, paid_by_label, payer_id, category, description, receipt_path, status, created_by, created_at")
       .eq("trip_id", data.tripId)
       .order("day_date", { ascending: false });
-    const { data: costs, error } = await sel;
     if (error) throw new Error(error.message);
 
     let splits: any[] = [];
-    let members: any[] = [];
     if (costs && costs.length > 0) {
       const ids = costs.map((c: any) => c.id);
       const { data: s } = await supabase
@@ -275,21 +304,31 @@ export const listCosts = createServerFn({ method: "GET" })
         .select("id, cost_id, participant_user_id, participant_key, share_eur")
         .in("cost_id", ids);
       splits = s ?? [];
-      const { data: m } = await supabase
-        .from("trip_members")
-        .select("user_id, profiles:user_id(display_name, email)")
-        .eq("trip_id", data.tripId);
-      const { data: own } = await supabase
-        .from("profiles").select("id, display_name, email")
-        .eq("id", (await supabase.from("trips").select("owner_id").eq("id", data.tripId).single()).data!.owner_id);
-      members = [
-        ...(own ?? []).map((p: any) => ({ user_id: p.id, display_name: p.display_name, email: p.email })),
-        ...((m ?? []) as any[]).map((r) => ({
-          user_id: r.user_id,
-          display_name: r.profiles?.display_name ?? r.profiles?.email ?? "Member",
-          email: r.profiles?.email,
-        })),
-      ];
+    }
+
+    // People list is fetched UNCONDITIONALLY (was gated on costs.length > 0,
+    // which made the very first payment impossible on a fresh database).
+    const { data: m } = await supabaseAdmin
+      .from("trip_members")
+      .select("user_id, status, profiles:user_id(display_name, email)")
+      .eq("trip_id", data.tripId);
+    const { data: own } = await supabaseAdmin
+      .from("profiles").select("id, display_name, email")
+      .eq("id", t.owner_id).maybeSingle();
+    const seen = new Set<string>();
+    const members: any[] = [];
+    if (own?.id) {
+      seen.add(own.id);
+      members.push({ user_id: own.id, display_name: own.display_name ?? own.email ?? "Owner", email: own.email });
+    }
+    for (const r of (m ?? []) as any[]) {
+      if (!r.user_id || seen.has(r.user_id) || r.status === "revoked") continue;
+      seen.add(r.user_id);
+      members.push({
+        user_id: r.user_id,
+        display_name: r.profiles?.display_name ?? r.profiles?.email ?? "Member",
+        email: r.profiles?.email,
+      });
     }
     return { isOwner, costs: costs ?? [], splits, members };
   });

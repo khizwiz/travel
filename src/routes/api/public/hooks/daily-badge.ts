@@ -14,7 +14,13 @@ export const Route = createFileRoute("/api/public/hooks/daily-badge")({
   server: {
     handlers: {
       GET: () => new Response("ok"),
-      POST: async () => {
+      POST: async ({ request }: { request: Request }) => {
+        // If CRON_SECRET is configured, callers must present it — the endpoint
+        // burns AI credits per call and is otherwise open.
+        const secret = process.env.CRON_SECRET;
+        if (secret && request.headers.get("x-cron-secret") !== secret) {
+          return new Response("forbidden", { status: 403 });
+        }
         try {
           const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
           const { data: trip } = await supabaseAdmin

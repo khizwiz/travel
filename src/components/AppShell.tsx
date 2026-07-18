@@ -99,12 +99,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     return <div className="min-h-screen bg-background text-foreground">{children}</div>;
   }
 
+  // Plain computation, deliberately NOT a hook: the share-link early return
+  // above means hook counts must not differ between renders/routes.
   const adminNavForRole: NavItem[] =
     role === "crew" ? CREW_NAV : role === "owner" ? ADMIN_NAV : isMember ? MEMBER_NAV : [];
-  const nav: NavItem[] = useMemo(
-    () => (hydrated && (isAdmin || isMember) ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV),
-    [hydrated, isAdmin, isMember, adminNavForRole],
-  );
+  const nav: NavItem[] =
+    hydrated && (isAdmin || isMember) ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV;
 
   const LANG_ORDER: Array<"en" | "tr" | "pl" | "it"> = ["en", "tr", "pl", "it"];
   const nextLanguage = () => {

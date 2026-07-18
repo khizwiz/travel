@@ -54,12 +54,19 @@ function AskPage() {
     setQ("");
     const idx = turns.length;
     setTurns((t) => [...t, { q: question, loading: true }]);
-    const res = await ask({ data: { question, context } });
-    setTurns((t) =>
-      t.map((tn, i) =>
-        i === idx ? { q: tn.q, loading: false, a: (res as any).answer, error: (res as any).error } : tn,
-      ),
-    );
+    try {
+      const res = await ask({ data: { question, context } });
+      setTurns((t) =>
+        t.map((tn, i) =>
+          i === idx ? { q: tn.q, loading: false, a: (res as any).answer, error: (res as any).error } : tn,
+        ),
+      );
+    } catch (e: any) {
+      const msg = /unauthorized/i.test(e?.message ?? "")
+        ? "Ask needs a login — use the Log in button (Admin or Member) and try again."
+        : e?.message ?? "Couldn't reach the assistant — check your connection and retry.";
+      setTurns((t) => t.map((tn, i) => (i === idx ? { q: tn.q, loading: false, error: msg } : tn)));
+    }
   }
 
   const suggestions = [

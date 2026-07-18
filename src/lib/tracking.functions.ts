@@ -66,6 +66,7 @@ export const getPublicLatestLocation = createServerFn({ method: "GET" })
       .from("location_points")
       .select("lat, lng, ts")
       .eq("trip_id", trip.id)
+      .eq("is_parked", false)
       .order("ts", { ascending: false })
       .limit(1)
       .maybeSingle();

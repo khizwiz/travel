@@ -39,10 +39,12 @@ export const listPublicAccommodations = createServerFn({ method: "GET" })
     const { data: trip } = await supabaseAdmin
       .from("trips").select("id").eq("slug", "eu-tripping-2026").maybeSingle();
     if (!trip) return [];
+    // PUBLIC endpoint: never expose booking references, prices, or private
+    // notes — RLS deliberately restricts those to trip members.
     const { data, error } = await supabaseAdmin
       .from("accommodations")
       .select(`
-        id, name, area_public, check_in, check_out, booking_ref, cost, currency, notes,
+        id, name, area_public, check_in, check_out,
         itinerary_days!inner ( day_date, trip_id )
       `)
       .eq("itinerary_days.trip_id", trip.id);
@@ -54,10 +56,10 @@ export const listPublicAccommodations = createServerFn({ method: "GET" })
       area_public: r.area_public,
       check_in: r.check_in,
       check_out: r.check_out,
-      booking_ref: r.booking_ref,
-      cost: r.cost,
-      currency: r.currency,
-      notes: r.notes,
+      booking_ref: null,
+      cost: null,
+      currency: null,
+      notes: null,
     }));
   });
 

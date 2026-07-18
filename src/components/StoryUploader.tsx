@@ -25,7 +25,7 @@ export function StoryUploader() {
 
   const [days, setDays] = useState<Day[]>([]);
   const [dayId, setDayId] = useState<string>("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -60,34 +60,43 @@ export function StoryUploader() {
   }, []);
 
   async function upload() {
-    if (!file || !dayId) return;
+    if (files.length === 0 || !dayId) return;
     setBusy(true);
     setErr(null);
     setOk(null);
+    let posted = 0;
     try {
-      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `${dayId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("destination-photos")
-        .upload(path, file, { cacheControl: "3600", upsert: false });
-      if (upErr) throw upErr;
-      await createPhoto({
-        data: {
-          dayId,
-          storagePath: path,
-          caption: caption.trim() || null,
-          isCover: false,
-          // Pin the photo to the map at the spot it was posted from.
-          lat: liveFix?.lat ?? null,
-          lng: liveFix?.lng ?? null,
-        },
-      });
-      setFile(null);
+      for (const file of files) {
+        const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+        const path = `${dayId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("destination-photos")
+          .upload(path, file, { cacheControl: "3600", upsert: false });
+        if (upErr) throw upErr;
+        await createPhoto({
+          data: {
+            dayId,
+            storagePath: path,
+            // The caption goes on the first photo of the batch.
+            caption: posted === 0 ? caption.trim() || null : null,
+            isCover: false,
+            // Pin the photo to the map at the spot it was posted from.
+            lat: liveFix?.lat ?? null,
+            lng: liveFix?.lng ?? null,
+          },
+        });
+        posted += 1;
+      }
+      setFiles([]);
       setCaption("");
-      setOk("Posted to Story.");
+      setOk(posted === 1 ? "Posted to Story." : `Posted ${posted} photos to Story.`);
       qc.invalidateQueries({ queryKey: ["public-story-photos"] });
     } catch (e: any) {
-      setErr(e?.message ?? "Upload failed");
+      setErr(
+        posted > 0
+          ? `Posted ${posted}, then failed: ${e?.message ?? "Upload failed"}`
+          : e?.message ?? "Upload failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -129,8 +138,8 @@ export function StoryUploader() {
           <input
             type="file"
             accept="image/*"
-            capture="environment"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            multiple
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
           />
         </label>
@@ -153,11 +162,11 @@ export function StoryUploader() {
       <div className="mt-3 flex items-center gap-2">
         <button
           onClick={upload}
-          disabled={!file || !dayId || busy}
+          disabled={files.length === 0 || !dayId || busy}
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          Post to Story
+          {files.length > 1 ? `Post ${files.length} photos` : "Post to Story"}
         </button>
         {ok && <span className="text-xs text-primary">{ok}</span>}
         {err && <span className="text-xs text-destructive">{err}</span>}

@@ -20,27 +20,31 @@ export const ensureTripScaffold = createServerFn({ method: "POST" })
       .eq("user_id", userId).eq("role", "owner").maybeSingle();
     if (!roleRow) throw new Error("Owner only");
 
-    const summary = { tripCreated: false, daysInserted: 0, bucketCreated: false };
+    const summary = { tripCreated: false, daysInserted: 0, bucketsCreated: [] as string[] };
 
-    // 1. Default trip row
+    // 1. Default trip row. public_slug matters: every anon RLS policy
+    // (public feed, comments, photos) requires it to be NOT NULL.
     let { data: trip } = await supabaseAdmin
-      .from("trips").select("id").eq("slug", "eu-tripping-2026").maybeSingle();
+      .from("trips").select("id, public_slug").eq("slug", "eu-tripping-2026").maybeSingle();
     if (!trip) {
       const { data: created, error } = await supabaseAdmin
         .from("trips")
         .insert({
           name: "Tripping — Istanbul and back",
           slug: "eu-tripping-2026",
+          public_slug: "eu-tripping",
           owner_id: userId,
           starts_on: ITINERARY[0]?.date ?? "2026-07-18",
           ends_on: ITINERARY[ITINERARY.length - 1]?.date ?? "2026-08-27",
           public_tracking_enabled: true,
         })
-        .select("id")
+        .select("id, public_slug")
         .single();
       if (error) throw new Error(error.message);
       trip = created;
       summary.tripCreated = true;
+    } else if (!trip.public_slug) {
+      await supabaseAdmin.from("trips").update({ public_slug: "eu-tripping" }).eq("id", trip.id);
     }
 
     // 2. Itinerary days — insert only missing dates, from the static plan.
@@ -64,14 +68,15 @@ export const ensureTripScaffold = createServerFn({ method: "POST" })
       summary.daysInserted = missing.length;
     }
 
-    // 3. Storage bucket for story photos
+    // 3. Storage buckets the app uploads into (all private; access via
+    // signed URLs / RLS policies that already exist in the migrations).
     const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-    if (!(buckets ?? []).some((b) => b.name === "destination-photos")) {
-      const { error } = await supabaseAdmin.storage.createBucket("destination-photos", {
-        public: false,
-      });
+    const haveBuckets = new Set((buckets ?? []).map((b) => b.name));
+    for (const name of ["destination-photos", "documents", "receipts"]) {
+      if (haveBuckets.has(name)) continue;
+      const { error } = await supabaseAdmin.storage.createBucket(name, { public: false });
       if (error && !/already exists/i.test(error.message)) throw new Error(error.message);
-      summary.bucketCreated = true;
+      summary.bucketsCreated.push(name);
     }
 
     return summary;

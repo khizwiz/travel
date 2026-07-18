@@ -12,6 +12,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getNearbySuggestions, type NearbyPick } from "@/lib/nearby.functions";
+import { useAuth } from "@/lib/auth";
 
 const ICONS: Record<NearbyPick["kind"], any> = {
   brutalist: Building2,
@@ -41,6 +42,7 @@ interface Props {
  */
 export function NearbyAiCard({ live, cityLabel }: Props) {
   const fn = useServerFn(getNearbySuggestions);
+  const { user } = useAuth();
   // Bucket coords to ~0.1° (~11 km) so we don't refetch on every micro-move.
   const bucketLat = live ? Math.round(live.lat * 10) / 10 : null;
   const bucketLng = live ? Math.round(live.lng * 10) / 10 : null;
@@ -48,12 +50,13 @@ export function NearbyAiCard({ live, cityLabel }: Props) {
   const { data, isLoading, isFetching, refetch, isError } = useQuery({
     queryKey: ["nearby-ai", bucketLat, bucketLng, cityLabel ?? ""],
     queryFn: () => fn({ data: { lat: live!.lat, lng: live!.lng, cityHint: cityLabel } }),
-    enabled: !!live,
+    // The AI endpoint requires a login — don't fire doomed requests for visitors.
+    enabled: !!live && !!user,
     staleTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
-  if (!live) {
+  if (!live || !user) {
     return (
       <section className="card-elev p-4">
         <header className="flex items-center gap-2">
@@ -61,7 +64,9 @@ export function NearbyAiCard({ live, cityLabel }: Props) {
           <h2 className="text-sm font-semibold">Nearby — brutalist, bars & sights</h2>
         </header>
         <p className="mt-2 text-xs text-muted-foreground">
-          Enable location to get AI picks within 50 km of where the truck is.
+          {!user
+            ? "Log in (Admin or Member) to get AI picks within 50 km of where the truck is."
+            : "Enable location to get AI picks within 50 km of where the truck is."}
         </p>
       </section>
     );

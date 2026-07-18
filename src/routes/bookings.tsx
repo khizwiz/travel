@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { Plane, Ship, BedDouble, Upload, Sparkles, Check, X, Loader2 } from "lucide-react";
@@ -177,15 +177,19 @@ function UploadCentre() {
     try {
       const res = await list({ data: { status: "pending" } });
       setPending(res.rows ?? []);
-      setLoaded(true);
     } catch (e: any) {
       setErr(e?.message ?? "Failed to load");
+    } finally {
+      setLoaded(true);
     }
   };
 
-  if (!loaded) {
+  // Initial load as an effect — calling it during render fired a server
+  // request on every keystroke (and during SSR) whenever the fetch failed.
+  useEffect(() => {
     refresh();
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fileToDataUrl = (f: File) =>
     new Promise<string>((resolve, reject) => {
