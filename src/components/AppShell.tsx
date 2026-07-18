@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Sun,
   Upload,
+  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -53,13 +54,14 @@ const PUBLIC_NAV: NavItem[] = [
 const ADMIN_NAV: NavItem[] = [
   { to: "/bookings", labelKey: "nav.bookings", hint: "Admin", icon: Upload },
   { to: "/cost", labelKey: "nav.cost", hint: "Admin", icon: Receipt },
+  { to: "/travellers", labelKey: "nav.travellers", hint: "Admin", icon: Users },
   { to: "/documents", labelKey: "nav.documents", hint: "Admin", icon: FileText },
   { to: "/checklist", labelKey: "nav.checklist", hint: "Admin", icon: CheckSquare },
   { to: "/settings", labelKey: "nav.settings", hint: "Admin", icon: SettingsIcon },
 ];
 
-// Miezko (crew) sees admin tools but not bookings/documents/settings.
-const CREW_HIDDEN = new Set<string>(["/bookings", "/documents", "/settings"]);
+// Miezko (crew) sees admin tools but not bookings/documents/settings/travellers.
+const CREW_HIDDEN = new Set<string>(["/bookings", "/documents", "/settings", "/travellers"]);
 const CREW_NAV: NavItem[] = ADMIN_NAV.filter((i) => !CREW_HIDDEN.has(i.to));
 
 // Regular members (email + password login) get the shared cost book.

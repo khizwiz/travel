@@ -21,6 +21,7 @@ import { Route as MapRouteImport } from './routes/map'
 import { Route as PlanningRouteImport } from './routes/planning'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StoryRouteImport } from './routes/story'
+import { Route as TravellersRouteImport } from './routes/travellers'
 import { Route as VehicleRouteImport } from './routes/vehicle'
 import { Route as CostShareTokenRouteImport } from './routes/cost.share.$token'
 import { Route as ApiPublicHooksBookingRemindersRouteImport } from './routes/api/public/hooks/booking-reminders'
@@ -86,6 +87,11 @@ const StoryRoute = StoryRouteImport.update({
   path: '/story',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TravellersRoute = TravellersRouteImport.update({
+  id: '/travellers',
+  path: '/travellers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VehicleRoute = VehicleRouteImport.update({
   id: '/vehicle',
   path: '/vehicle',
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/planning': typeof PlanningRoute
   '/settings': typeof SettingsRoute
   '/story': typeof StoryRoute
+  '/travellers': typeof TravellersRoute
   '/vehicle': typeof VehicleRoute
   '/cost/share/$token': typeof CostShareTokenRoute
   '/api/public/hooks/booking-reminders': typeof ApiPublicHooksBookingRemindersRoute
@@ -140,6 +147,7 @@ export interface FileRoutesByTo {
   '/planning': typeof PlanningRoute
   '/settings': typeof SettingsRoute
   '/story': typeof StoryRoute
+  '/travellers': typeof TravellersRoute
   '/vehicle': typeof VehicleRoute
   '/cost/share/$token': typeof CostShareTokenRoute
   '/api/public/hooks/booking-reminders': typeof ApiPublicHooksBookingRemindersRoute
@@ -159,6 +167,7 @@ export interface FileRoutesById {
   '/planning': typeof PlanningRoute
   '/settings': typeof SettingsRoute
   '/story': typeof StoryRoute
+  '/travellers': typeof TravellersRoute
   '/vehicle': typeof VehicleRoute
   '/cost/share/$token': typeof CostShareTokenRoute
   '/api/public/hooks/booking-reminders': typeof ApiPublicHooksBookingRemindersRoute
@@ -179,6 +188,7 @@ export interface FileRouteTypes {
     | '/planning'
     | '/settings'
     | '/story'
+    | '/travellers'
     | '/vehicle'
     | '/cost/share/$token'
     | '/api/public/hooks/booking-reminders'
@@ -197,6 +207,7 @@ export interface FileRouteTypes {
     | '/planning'
     | '/settings'
     | '/story'
+    | '/travellers'
     | '/vehicle'
     | '/cost/share/$token'
     | '/api/public/hooks/booking-reminders'
@@ -215,6 +226,7 @@ export interface FileRouteTypes {
     | '/planning'
     | '/settings'
     | '/story'
+    | '/travellers'
     | '/vehicle'
     | '/cost/share/$token'
     | '/api/public/hooks/booking-reminders'
@@ -234,6 +246,7 @@ export interface RootRouteChildren {
   PlanningRoute: typeof PlanningRoute
   SettingsRoute: typeof SettingsRoute
   StoryRoute: typeof StoryRoute
+  TravellersRoute: typeof TravellersRoute
   VehicleRoute: typeof VehicleRoute
   ApiPublicHooksBookingRemindersRoute: typeof ApiPublicHooksBookingRemindersRoute
   ApiPublicHooksDailyBadgeRoute: typeof ApiPublicHooksDailyBadgeRoute
@@ -325,6 +338,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/travellers': {
+      id: '/travellers'
+      path: '/travellers'
+      fullPath: '/travellers'
+      preLoaderRoute: typeof TravellersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/vehicle': {
       id: '/vehicle'
       path: '/vehicle'
@@ -379,6 +399,7 @@ const rootRouteChildren: RootRouteChildren = {
   PlanningRoute: PlanningRoute,
   SettingsRoute: SettingsRoute,
   StoryRoute: StoryRoute,
+  TravellersRoute: TravellersRoute,
   VehicleRoute: VehicleRoute,
   ApiPublicHooksBookingRemindersRoute: ApiPublicHooksBookingRemindersRoute,
   ApiPublicHooksDailyBadgeRoute: ApiPublicHooksDailyBadgeRoute,
