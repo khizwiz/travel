@@ -34,7 +34,30 @@ export type NearbyPick = {
   where: string;
   why: string;
   approx_km: number;
+  thumb?: string | null;
 };
+
+// Free thumbnail lookup: first Wikipedia page-image hit for "<name> <where>".
+// Best-effort — returns null on any miss/error so picks render without images.
+async function wikiThumb(name: string, where: string): Promise<string | null> {
+  try {
+    const q = encodeURIComponent(`${name} ${where}`.trim());
+    const url =
+      `https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search` +
+      `&gsrsearch=${q}&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=320`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "khizapp-travel/1.0 (family road-trip app)" },
+    });
+    if (!res.ok) return null;
+    const j: any = await res.json();
+    const pages = j?.query?.pages;
+    if (!pages) return null;
+    const first: any = Object.values(pages)[0];
+    return first?.thumbnail?.source ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export const getNearbySuggestions = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -94,9 +117,13 @@ export const getNearbySuggestions = createServerFn({ method: "POST" })
               approx_km: Number(p.approx_km ?? 0),
             }))
         : [];
+      // Enrich with thumbnails in parallel (best-effort, keyless).
+      const picksWithThumbs: NearbyPick[] = await Promise.all(
+        picks.map(async (p) => ({ ...p, thumb: await wikiThumb(p.name, p.where) })),
+      );
       return {
         area: String(parsed.area ?? data.cityHint ?? ""),
-        picks,
+        picks: picksWithThumbs,
         next_stop: parsed.next_stop
           ? {
               name: String(parsed.next_stop.name ?? "").slice(0, 120),

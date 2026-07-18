@@ -98,9 +98,14 @@ async function tryGooglePlaces(lat: number, lng: number, radius: number): Promis
 async function tryOverpass(lat: number, lng: number, radius: number): Promise<FuelStation[] | null> {
   const query = `[out:json][timeout:10];(node["amenity"="fuel"](around:${radius},${lat},${lng});way["amenity"="fuel"](around:${radius},${lat},${lng}););out center 30;`;
   try {
+    // Overpass rejects UA-less requests with 406 — always send an identifying UA.
     const res = await fetch("https://overpass-api.de/api/interpreter", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "khizapp-travel/1.0 (family road-trip app)",
+        Accept: "application/json",
+      },
       body: `data=${encodeURIComponent(query)}`,
     });
     if (!res.ok) {

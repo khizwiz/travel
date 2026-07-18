@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
+import { useApp } from "@/lib/app-state";
 
 interface Point {
   lat: number;
@@ -19,10 +20,12 @@ interface RouteMapProps {
   focusCovered?: boolean;
 }
 
-// Free, key-less map stack: Leaflet + OpenStreetMap data via CARTO dark tiles.
+// Free, key-less map stack: Leaflet + OpenStreetMap data via CARTO tiles.
 // Replaces the Google Maps setup whose browser keys were referrer-locked to
 // domains this deployment does not control.
-const TILE_URL = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+// Tiles follow the app theme: readable light "voyager" by default, dark in dark mode.
+const TILE_URL_LIGHT = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const TILE_URL_DARK = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const TILE_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
@@ -35,6 +38,8 @@ export function RouteMap({
 }: RouteMapProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const { theme } = useApp();
+  const tileUrl = theme === "dark" ? TILE_URL_DARK : TILE_URL_LIGHT;
 
   useEffect(() => {
     if (points.length === 0 || !ref.current) return;
@@ -45,7 +50,7 @@ export function RouteMap({
         const L = (await import("leaflet")).default;
         if (cancelled || !ref.current) return;
         map = L.map(ref.current, { zoomControl: true, attributionControl: true });
-        L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+        L.tileLayer(tileUrl, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
 
         const routePoints = points.filter((p) => !p.accent);
         const accentPoints = points.filter((p) => p.accent);
@@ -114,7 +119,7 @@ export function RouteMap({
       map?.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(points), coveredIndex, focusCovered, singleZoom]);
+  }, [JSON.stringify(points), coveredIndex, focusCovered, singleZoom, tileUrl]);
 
   if (error) {
     return (

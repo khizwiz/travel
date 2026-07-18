@@ -120,6 +120,14 @@ export function NearbyAiCard({ live, cityLabel }: Props) {
                     </span>
                   )}
                 </div>
+                {p.thumb && (
+                  <img
+                    src={p.thumb}
+                    alt={p.name}
+                    loading="lazy"
+                    className="mt-1.5 h-24 w-full rounded-md border border-border/50 object-cover"
+                  />
+                )}
                 <div className="mt-1 text-sm font-medium leading-tight">{p.name}</div>
                 {p.where && <div className="text-[11px] text-muted-foreground">{p.where}</div>}
                 {p.why && <p className="mt-1 text-xs text-muted-foreground">{p.why}</p>}
