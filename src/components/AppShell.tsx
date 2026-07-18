@@ -25,6 +25,8 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useApp } from "@/lib/app-state";
 import { useAdminAuth } from "@/lib/admin-auth";
+import { useAuth } from "@/lib/auth";
+import { supabase } from "@/integrations/supabase/client";
 import { useT } from "@/lib/i18n";
 import { useTripTrackingSync } from "@/hooks/use-trip-tracking-sync";
 import { cn } from "@/lib/utils";
@@ -60,6 +62,9 @@ const ADMIN_NAV: NavItem[] = [
 const CREW_HIDDEN = new Set<string>(["/bookings", "/documents", "/settings"]);
 const CREW_NAV: NavItem[] = ADMIN_NAV.filter((i) => !CREW_HIDDEN.has(i.to));
 
+// Regular members (email + password login) get the shared cost book.
+const MEMBER_NAV: NavItem[] = ADMIN_NAV.filter((i) => i.to === "/cost");
+
 // Mobile bottom tabs: 4 primary + More sheet with the rest.
 const MOBILE_PRIMARY: NavItem[] = [
   { to: "/", labelKey: "nav.home", hint: "Live trip", icon: Home },
@@ -74,6 +79,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, language, setLanguage } = useApp();
   const t = useT();
   const { isAdmin, role, signIn, signOut, loading } = useAdminAuth();
+  const { user, signOut: memberSignOut } = useAuth();
+  const isMember = !isAdmin && !!user;
   const [hydrated, setHydrated] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -91,10 +98,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const adminNavForRole: NavItem[] =
-    role === "crew" ? CREW_NAV : role === "owner" ? ADMIN_NAV : [];
+    role === "crew" ? CREW_NAV : role === "owner" ? ADMIN_NAV : isMember ? MEMBER_NAV : [];
   const nav: NavItem[] = useMemo(
-    () => (hydrated && isAdmin ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV),
-    [hydrated, isAdmin, adminNavForRole],
+    () => (hydrated && (isAdmin || isMember) ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV),
+    [hydrated, isAdmin, isMember, adminNavForRole],
   );
 
   const LANG_ORDER: Array<"en" | "tr" | "pl" | "it"> = ["en", "tr", "pl", "it"];
@@ -159,6 +166,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <ShieldCheck className="h-3.5 w-3.5" /> {role === "crew" ? "Miezko" : "Admin"} active
                 <LogOut className="h-3.5 w-3.5 opacity-70" />
               </button>
+            ) : hydrated && isMember ? (
+              <button
+                type="button"
+                onClick={memberSignOut}
+                className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold text-[var(--cream)] transition hover:opacity-90"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" /> {user?.user_metadata?.display_name ?? "Member"} active
+                <LogOut className="h-3.5 w-3.5 opacity-70" />
+              </button>
             ) : (
               <button
                 type="button"
@@ -166,7 +182,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold text-[var(--cream)] transition hover:opacity-90"
                 suppressHydrationWarning
               >
-                <Lock className="h-3.5 w-3.5" /> Admin Login
+                <Lock className="h-3.5 w-3.5" /> Log in
               </button>
             )}
           </div>
@@ -252,7 +268,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {moreOpen && (
         <MoreSheet
           onClose={() => setMoreOpen(false)}
-          items={hydrated && isAdmin ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV}
+          items={hydrated && (isAdmin || isMember) ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV}
           pathname={pathname}
           t={t}
         />
@@ -261,10 +277,15 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 
       {modalOpen && (
-        <AdminLoginModal
+        <LoginModal
           onClose={() => setModalOpen(false)}
-          onSubmit={async (password) => {
+          onSubmitAdmin={async (password) => {
             await signIn(password);
+            setModalOpen(false);
+          }}
+          onSubmitMember={async (email, password) => {
+            const { error } = await supabase.auth.signInWithPassword({ email, password });
+            if (error) throw new Error(error.message);
             setModalOpen(false);
           }}
           loading={loading}
@@ -274,15 +295,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function AdminLoginModal({
+function LoginModal({
   onClose,
-  onSubmit,
+  onSubmitAdmin,
+  onSubmitMember,
   loading,
 }: {
   onClose: () => void;
-  onSubmit: (password: string) => Promise<void>;
+  onSubmitAdmin: (password: string) => Promise<void>;
+  onSubmitMember: (email: string, password: string) => Promise<void>;
   loading: boolean;
 }) {
+  const [mode, setMode] = useState<"admin" | "member">("admin");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -292,13 +317,20 @@ function AdminLoginModal({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit(password);
+      if (mode === "admin") await onSubmitAdmin(password);
+      else await onSubmitMember(email.trim().toLowerCase(), password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setBusy(false);
     }
   }
+
+  const tabClass = (active: boolean) =>
+    cn(
+      "flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition",
+      active ? "bg-[var(--ink)] text-[var(--cream)]" : "text-muted-foreground hover:bg-muted",
+    );
 
   return (
     <div
@@ -312,11 +344,15 @@ function AdminLoginModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-              Admin
+              {mode === "admin" ? "Admin" : "Member"}
             </div>
-            <h2 className="mt-1 font-display text-2xl">Unlock controls</h2>
+            <h2 className="mt-1 font-display text-2xl">
+              {mode === "admin" ? "Unlock controls" : "Log in"}
+            </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Same page. Admin gets edit, upload, cost and delete on top of what you already see.
+              {mode === "admin"
+                ? "Same page. Admin gets edit, upload, cost and delete on top of what you already see."
+                : "For travellers: add shared costs and see who owes whom. Use the email + password the trip owner gave you."}
             </p>
           </div>
           <button
@@ -328,12 +364,33 @@ function AdminLoginModal({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={submit} className="mt-5 space-y-3">
+        <div className="mt-4 flex gap-1 rounded-full border border-border bg-background p-1">
+          <button type="button" className={tabClass(mode === "admin")} onClick={() => { setMode("admin"); setError(null); }}>
+            Admin
+          </button>
+          <button type="button" className={tabClass(mode === "member")} onClick={() => { setMode("member"); setError(null); }}>
+            Member
+          </button>
+        </div>
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          {mode === "member" && (
+            <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Email
+              <input
+                type="email"
+                autoFocus
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1 w-full rounded-2xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground outline-none ring-primary/30 focus:ring-2"
+              />
+            </label>
+          )}
           <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Password
             <input
               type="password"
-              autoFocus
+              autoFocus={mode === "admin"}
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -347,11 +404,11 @@ function AdminLoginModal({
           )}
           <button
             type="submit"
-            disabled={busy || loading || !password}
+            disabled={busy || loading || !password || (mode === "member" && !email.trim())}
             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2.5 text-sm font-semibold text-[var(--cream)] transition hover:opacity-90 disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-            {busy ? "Signing in…" : "Unlock admin"}
+            {busy ? "Signing in…" : mode === "admin" ? "Unlock admin" : "Log in"}
           </button>
         </form>
       </div>

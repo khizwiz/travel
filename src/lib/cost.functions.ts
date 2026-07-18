@@ -452,18 +452,24 @@ export const addTraveller = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     await ensureOwner(supabase, userId, data.tripId);
     const email = data.email.trim().toLowerCase();
+    let starterPassword: string | null = null;
     let { data: prof } = await supabase
       .from("profiles").select("id").eq("email", email).maybeSingle();
     if (!prof?.id) {
       // Auto-provision an account so they can be added as a co-payer immediately.
+      // A starter password is generated and returned ONCE so the owner can pass
+      // it to the person; they log in via the Member tab of the login modal.
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      starterPassword = generatePassword();
       const { data: created, error: cErr } = await supabaseAdmin.auth.admin.createUser({
         email,
+        password: starterPassword,
         email_confirm: true,
         user_metadata: { display_name: email.split("@")[0] },
       });
       if (cErr || !created?.user?.id) {
         // If user already exists in auth but no profile row, look them up.
+        starterPassword = null; // no new password was set for a pre-existing account
         const { data: list } = await supabaseAdmin.auth.admin.listUsers();
         const existing = list?.users?.find((u) => (u.email ?? "").toLowerCase() === email);
         if (!existing?.id) throw new Error(cErr?.message ?? "Could not create account for that email.");
@@ -482,9 +488,36 @@ export const addTraveller = createServerFn({ method: "POST" })
       role_in_trip: "passenger",
     });
     if (error && !/duplicate/i.test(error.message)) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, starterPassword };
   });
 
+// Owner-only: set a fresh password on a member's account and return it ONCE.
+// Target is addressed by trip_members.id so it can never reach users outside
+// a trip the caller owns.
+export const resetMemberPassword = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ memberId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: m } = await supabase
+      .from("trip_members").select("trip_id, user_id").eq("id", data.memberId).single();
+    if (!m?.user_id) throw new Error("Not found");
+    await ensureOwner(supabase, userId, m.trip_id);
+    const password = generatePassword();
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(m.user_id, { password });
+    if (error) throw new Error(error.message);
+    return { password };
+  });
+
+// Readable starter password: 3 groups of 4 lowercase/digit chars, e.g. "k3vt-9pma-x2dh".
+function generatePassword(): string {
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // no 0/O/1/l/i lookalikes
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const s = Array.from(bytes, (b) => chars[b % chars.length]).join("");
+  return `${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8, 12)}`;
+}
 
 export const removeTraveller = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

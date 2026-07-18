@@ -7,7 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { getDefaultTrip } from "@/lib/access.functions";
 import {
   COST_CATEGORIES, addTraveller, approveCost, computeSettlement, createCost, createCostShareSnapshot,
-  deleteCost, listCosts, listTravellers, rejectCost, removeTraveller, updateCostAmounts,
+  deleteCost, listCosts, listTravellers, rejectCost, removeTraveller, resetMemberPassword, updateCostAmounts,
 } from "@/lib/cost.functions";
 import { addCostPayer, listCostPayers, removeCostPayer } from "@/lib/cost-payers.functions";
 
@@ -339,6 +339,7 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
   const doList = useServerFn(listTravellers);
   const doAdd = useServerFn(addTraveller);
   const doRemove = useServerFn(removeTraveller);
+  const doResetPwd = useServerFn(resetMemberPassword);
   const doListPayers = useServerFn(listCostPayers);
   const doAddPayer = useServerFn(addCostPayer);
   const doRemovePayer = useServerFn(removeCostPayer);
@@ -351,6 +352,8 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
   const [busy, setBusy] = useState(false);
   const [busyPayer, setBusyPayer] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ email: string; password: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   async function refresh() {
     try { setRows(await doList({ data: { tripId } })); } catch {}
@@ -360,9 +363,14 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
 
   async function add() {
     setBusy(true); setErr(null);
+    const invitedEmail = email.trim().toLowerCase();
     try {
-      await doAdd({ data: { tripId, email: email.trim(), startsOn: startsOn || null, endsOn: endsOn || null } });
+      const res = await doAdd({ data: { tripId, email: invitedEmail, startsOn: startsOn || null, endsOn: endsOn || null } });
       setEmail(""); setStartsOn(""); setEndsOn("");
+      if (res?.starterPassword) {
+        setReveal({ email: invitedEmail, password: res.starterPassword });
+        setCopied(false);
+      }
       await refresh();
     } catch (e: any) { setErr(e?.message ?? "Failed to add"); }
     finally { setBusy(false); }
@@ -371,6 +379,15 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
   async function remove(id: string) {
     if (!confirm("Remove this traveller? Their historical splits stay in place.")) return;
     try { await doRemove({ data: { memberId: id } }); await refresh(); } catch (e: any) { alert(e?.message); }
+  }
+
+  async function resetPwd(r: any) {
+    if (!confirm(`Set a new password for ${r.email ?? r.display_name}? Their old one stops working.`)) return;
+    try {
+      const res = await doResetPwd({ data: { memberId: r.id } });
+      setReveal({ email: r.email ?? r.display_name, password: res.password });
+      setCopied(false);
+    } catch (e: any) { alert(e?.message); }
   }
 
   async function addPayer() {
@@ -431,6 +448,38 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
           </ul>
         </div>
 
+        {/* One-time password reveal after inviting / resetting */}
+        {reveal && (
+          <div className="mt-4 rounded-lg border-2 border-amber-400/70 bg-amber-50 p-3 dark:bg-amber-950/30">
+            <div className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+              Login details — shown once, copy them now
+            </div>
+            <div className="mt-2 space-y-1 font-mono text-sm">
+              <div className="truncate">{reveal.email}</div>
+              <div className="font-semibold">{reveal.password}</div>
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Send these to the person. They log in via the <b>Log in → Member</b> tab. You can reset the password here any time.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(`${reveal.email}\n${reveal.password}`);
+                    setCopied(true);
+                  } catch { /* clipboard unavailable */ }
+                }}
+                className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground">
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
+              </button>
+              <button onClick={() => setReveal(null)}
+                className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Existing app-user members (owner + anyone who logs in) */}
         <div className="mt-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">App accounts on this trip</div>
@@ -447,10 +496,18 @@ function TravellersModal({ tripId, onClose }: { tripId: string; onClose: () => v
                   </div>
                 </div>
                 {r.status === "active" && (
-                  <button onClick={() => remove(r.id)}
-                    className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">
-                    <UserMinus className="h-3 w-3" /> Remove
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {r.role_in_trip !== "owner" && r.email && (
+                      <button onClick={() => resetPwd(r)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+                        <Lock className="h-3 w-3" /> Reset password
+                      </button>
+                    )}
+                    <button onClick={() => remove(r.id)}
+                      className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">
+                      <UserMinus className="h-3 w-3" /> Remove
+                    </button>
+                  </div>
                 )}
               </li>
             ))}
