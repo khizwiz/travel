@@ -49,7 +49,7 @@ export const listPublicDestinationPhotos = createServerFn({ method: "GET" })
     if (!trip) return [];
     const { data: rows, error } = await supabaseAdmin
       .from("destination_photos")
-      .select("id, day_id, storage_path, caption, is_cover, created_at, post_id, itinerary_days!inner(trip_id, day_date, title)")
+      .select("*, itinerary_days!inner(trip_id, day_date, title)")
       .eq("itinerary_days.trip_id", trip.id)
       .order("created_at", { ascending: false })
       .limit(200);
@@ -70,21 +70,33 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
     storagePath: z.string().min(1).max(500),
     caption: z.string().trim().max(300).optional().nullable(),
     isCover: z.boolean().optional(),
+    lat: z.number().min(-90).max(90).optional().nullable(),
+    lng: z.number().min(-180).max(180).optional().nullable(),
   }).parse(d))
   .handler(async ({ data, context }) => {
     if (data.isCover) {
       await context.supabase.from("destination_photos")
         .update({ is_cover: false }).eq("day_id", data.dayId);
     }
-    const { data: row, error } = await context.supabase
-      .from("destination_photos").insert({
-        day_id: data.dayId,
-        storage_path: data.storagePath,
-        caption: data.caption ?? null,
-        is_cover: data.isCover ?? false,
-        uploaded_by: context.userId,
-      }).select("id").single();
-    if (error) throw new Error(error.message);
+    const base = {
+      day_id: data.dayId,
+      storage_path: data.storagePath,
+      caption: data.caption ?? null,
+      is_cover: data.isCover ?? false,
+      uploaded_by: context.userId,
+    };
+    // Include GPS if provided; retry without it if the lat/lng migration
+    // hasn't been applied yet so uploads never break on schema drift.
+    const withGeo = data.lat != null && data.lng != null
+      ? { ...base, lat: data.lat, lng: data.lng }
+      : base;
+    let { data: row, error } = await context.supabase
+      .from("destination_photos").insert(withGeo).select("id").single();
+    if (error && withGeo !== base && /column/i.test(error.message)) {
+      ({ data: row, error } = await context.supabase
+        .from("destination_photos").insert(base).select("id").single());
+    }
+    if (error || !row) throw new Error(error?.message ?? "Insert failed");
     return { id: row.id };
   });
 

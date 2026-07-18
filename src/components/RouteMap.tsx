@@ -9,6 +9,13 @@ interface Point {
   accent?: boolean; // render as glowing live-position marker
 }
 
+export interface PhotoMarker {
+  lat: number;
+  lng: number;
+  thumbUrl: string;
+  label?: string;
+}
+
 interface RouteMapProps {
   points: Point[];
   height?: number;
@@ -18,6 +25,8 @@ interface RouteMapProps {
   coveredIndex?: number;
   /** If true, auto-fit to live + covered points only. */
   focusCovered?: boolean;
+  /** Story photos pinned where they were taken (round thumbnails). */
+  photos?: PhotoMarker[];
 }
 
 // Free, key-less map stack: Leaflet + OpenStreetMap data via CARTO tiles.
@@ -35,6 +44,7 @@ export function RouteMap({
   singleZoom = 9,
   coveredIndex,
   focusCovered = false,
+  photos = [],
 }: RouteMapProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +94,24 @@ export function RouteMap({
           }).addTo(map!);
         });
 
+        // Story photo thumbnails pinned where they were taken.
+        photos.forEach((ph) => {
+          const marker = L.marker([ph.lat, ph.lng], {
+            title: ph.label ?? "Photo",
+            icon: L.divIcon({
+              className: "",
+              iconSize: [40, 40],
+              iconAnchor: [20, 20],
+              html: `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);"><img src="${ph.thumbUrl}" style="width:100%;height:100%;object-fit:cover;" alt=""/></div>`,
+            }),
+          }).addTo(map!);
+          marker.bindPopup(
+            `<div style="max-width:220px"><img src="${ph.thumbUrl}" style="width:100%;border-radius:8px" alt=""/>${
+              ph.label ? `<div style="margin-top:6px;font-size:12px">${ph.label.replace(/</g, "&lt;")}</div>` : ""
+            }</div>`,
+          );
+        });
+
         const path = routePoints.map((p) => [p.lat, p.lng] as [number, number]);
         if (path.length > 1) {
           if (covered > 1) {
@@ -119,7 +147,7 @@ export function RouteMap({
       map?.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(points), coveredIndex, focusCovered, singleZoom, tileUrl]);
+  }, [JSON.stringify(points), JSON.stringify(photos), coveredIndex, focusCovered, singleZoom, tileUrl]);
 
   if (error) {
     return (

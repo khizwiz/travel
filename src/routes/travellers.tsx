@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { Lock } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getDefaultTrip } from "@/lib/access.functions";
+import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { TravellersManager } from "@/components/TravellersManager";
 
 export const Route = createFileRoute("/travellers")({
@@ -14,9 +15,26 @@ export const Route = createFileRoute("/travellers")({
 function TravellersPage() {
   const { user, isOwner, loading } = useAuth();
   const fetchTrip = useServerFn(getDefaultTrip);
+  const ensureScaffold = useServerFn(ensureTripScaffold);
   const [tripId, setTripId] = useState<string | null>(null);
+  const [scaffoldErr, setScaffoldErr] = useState<string | null>(null);
 
-  useEffect(() => { fetchTrip().then((t) => t && setTripId(t.id)); }, [fetchTrip]);
+  useEffect(() => {
+    let alive = true;
+    fetchTrip().then(async (t) => {
+      if (!alive) return;
+      if (t?.id) { setTripId(t.id); return; }
+      // Fresh database: create trip + days + photo bucket, then retry.
+      try {
+        await ensureScaffold();
+        const t2 = await fetchTrip();
+        if (alive && t2?.id) setTripId(t2.id);
+      } catch (e: any) {
+        if (alive) setScaffoldErr(e?.message ?? "Could not initialise the trip.");
+      }
+    }).catch((e: any) => { if (alive) setScaffoldErr(e?.message ?? "Failed to load trip"); });
+    return () => { alive = false; };
+  }, [fetchTrip, ensureScaffold]);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   if (!user || !isOwner) {
@@ -32,7 +50,9 @@ function TravellersPage() {
       <h1 className="font-display text-2xl">People on this trip</h1>
       {tripId
         ? <TravellersManager tripId={tripId} />
-        : <div className="mt-3 text-sm text-muted-foreground">Loading…</div>}
+        : scaffoldErr
+          ? <div className="mt-3 text-sm text-destructive">{scaffoldErr}</div>
+          : <div className="mt-3 text-sm text-muted-foreground">Loading…</div>}
     </div>
   );
 }

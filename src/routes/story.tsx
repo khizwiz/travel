@@ -93,28 +93,63 @@ function StoryPage() {
           )}
         </div>
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2">
-          {feed.map((p: any) => (
-            <article key={p.id} className="card-elev overflow-hidden p-0">
-              <div className="relative aspect-[4/5] w-full overflow-hidden bg-muted">
-                <img src={p.signedUrl} alt={p.caption ?? ""} className="h-full w-full object-cover" />
-              </div>
-              <div className="space-y-2 p-4">
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  <span className="chip inline-flex items-center gap-1">
-                    <MapPin className="h-3 w-3" />
-                    {p.itinerary_days?.title ?? "On the road"}
-                  </span>
-                  {p.itinerary_days?.day_date && (
-                    <span className="chip">{formatDate(p.itinerary_days.day_date)}</span>
+        /* Timeline: photos grouped per day along a vertical rail, newest day first. */
+        <div className="relative space-y-10 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-border">
+          {Array.from(
+            feed.reduce((m: Map<string, any[]>, p: any) => {
+              const key = p.itinerary_days?.day_date ?? "0000-00-00";
+              if (!m.has(key)) m.set(key, []);
+              m.get(key)!.push(p);
+              return m;
+            }, new Map<string, any[]>()),
+          )
+            .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+            .map(([date, items]) => (
+              <section key={date} className="relative pl-8">
+                <span className="absolute left-0 top-1.5 h-4 w-4 rounded-full border-2 border-primary bg-background" />
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <h3 className="font-display text-lg">
+                    {date !== "0000-00-00" ? formatDateLong(date) : "On the road"}
+                  </h3>
+                  {items[0]?.itinerary_days?.title && (
+                    <span className="text-xs text-muted-foreground">
+                      {items[0].itinerary_days.title}
+                    </span>
                   )}
-                  {p.is_cover && <span className="chip chip-gold">Cover</span>}
+                  <span className="text-[11px] text-muted-foreground">
+                    · {items.length} photo{items.length > 1 ? "s" : ""}
+                  </span>
                 </div>
-                {p.caption && <p className="text-sm leading-relaxed">{p.caption}</p>}
-                <CommentsSection postId={p.post_id ?? null} />
-              </div>
-            </article>
-          ))}
+                <div className="mt-3 grid gap-5 sm:grid-cols-2">
+                  {items.map((p: any) => (
+                    <article key={p.id} className="card-elev overflow-hidden p-0">
+                      <div className="relative aspect-[4/5] w-full overflow-hidden bg-muted">
+                        <img src={p.signedUrl} alt={p.caption ?? ""} className="h-full w-full object-cover" />
+                      </div>
+                      <div className="space-y-2 p-4">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                          <span className="chip inline-flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />
+                            {p.itinerary_days?.title ?? "On the road"}
+                          </span>
+                          {p.itinerary_days?.day_date && (
+                            <span className="chip">{formatDate(p.itinerary_days.day_date)}</span>
+                          )}
+                          {p.is_cover && <span className="chip chip-gold">Cover</span>}
+                          {p.lat != null && p.lng != null && (
+                            <Link to="/map" className="chip inline-flex items-center gap-1 hover:text-foreground">
+                              <MapPin className="h-3 w-3" /> On the map
+                            </Link>
+                          )}
+                        </div>
+                        {p.caption && <p className="text-sm leading-relaxed">{p.caption}</p>}
+                        <CommentsSection postId={p.post_id ?? null} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ))}
         </div>
       )}
 

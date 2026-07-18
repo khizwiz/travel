@@ -1,12 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LocateFixed, LocateOff, Navigation } from "lucide-react";
 import { ITINERARY, getTripProgress } from "@/lib/trip-data";
-import { RouteMap } from "@/components/RouteMap";
+import { RouteMap, type PhotoMarker } from "@/components/RouteMap";
 import { useAdminAuth } from "@/lib/admin-auth";
 import { pickCoord, nearestCity } from "@/lib/geo";
 import { useApp } from "@/lib/app-state";
 import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { listPublicDestinationPhotos } from "@/lib/photos.functions";
 
 export const Route = createFileRoute("/map")({
   head: () => ({
@@ -58,6 +61,22 @@ function TrackingPage() {
 
   const live = geo.enabled && liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
   const near = live ? nearestCity(live) : null;
+
+  // Story photos with GPS: shown as round thumbnails where they were taken.
+  const fetchPhotos = useServerFn(listPublicDestinationPhotos);
+  const { data: storyPhotos } = useQuery({
+    queryKey: ["public-story-photos"],
+    queryFn: () => fetchPhotos(),
+    staleTime: 60_000,
+  });
+  const photoMarkers: PhotoMarker[] = (storyPhotos ?? [])
+    .filter((p: any) => p.lat != null && p.lng != null && p.signedUrl)
+    .map((p: any) => ({
+      lat: p.lat,
+      lng: p.lng,
+      thumbUrl: p.signedUrl,
+      label: p.caption ?? p.itinerary_days?.title ?? undefined,
+    }));
 
   const points = [
     ...shownWaypoints.map(({ lat, lng, label }) => ({ lat, lng, label })),
@@ -121,6 +140,7 @@ function TrackingPage() {
               height={380}
               coveredIndex={isAdmin ? coveredIndex : shownWaypoints.length}
               focusCovered={progress.phase === "active" && coveredIndex > 0}
+              photos={photoMarkers}
             />
           )}
         </div>

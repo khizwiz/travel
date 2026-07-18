@@ -10,6 +10,7 @@ import {
   deleteCost, listCosts, listTravellers, rejectCost, removeTraveller, resetMemberPassword, updateCostAmounts,
 } from "@/lib/cost.functions";
 import { addCostPayer, listCostPayers, removeCostPayer } from "@/lib/cost-payers.functions";
+import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { TravellersManager } from "@/components/TravellersManager";
 
 
@@ -66,7 +67,19 @@ function OwnerView() {
   const [showAdd, setShowAdd] = useState(false);
   const fetchPayers = useServerFn(listCostPayers);
 
-  useEffect(() => { fetchTrip().then((t) => t && setTripId(t.id)); }, [fetchTrip]);
+  const ensureScaffold = useServerFn(ensureTripScaffold);
+  useEffect(() => {
+    fetchTrip().then(async (t) => {
+      if (t?.id) { setTripId(t.id); return; }
+      // Fresh database: initialise trip + days + photo bucket, then retry.
+      // (No-op for non-owners: the server rejects and we swallow the error.)
+      try {
+        await ensureScaffold();
+        const t2 = await fetchTrip();
+        if (t2?.id) setTripId(t2.id);
+      } catch { /* non-owner or scaffold failed */ }
+    });
+  }, [fetchTrip, ensureScaffold]);
   useEffect(() => {
     if (!tripId) return;
     refresh();
@@ -361,7 +374,19 @@ function CompanionView() {
   const [mine, setMine] = useState<any[]>([]);
   const [showAdd, setShowAdd] = useState(false);
 
-  useEffect(() => { fetchTrip().then((t) => t && setTripId(t.id)); }, [fetchTrip]);
+  const ensureScaffold = useServerFn(ensureTripScaffold);
+  useEffect(() => {
+    fetchTrip().then(async (t) => {
+      if (t?.id) { setTripId(t.id); return; }
+      // Fresh database: initialise trip + days + photo bucket, then retry.
+      // (No-op for non-owners: the server rejects and we swallow the error.)
+      try {
+        await ensureScaffold();
+        const t2 = await fetchTrip();
+        if (t2?.id) setTripId(t2.id);
+      } catch { /* non-owner or scaffold failed */ }
+    });
+  }, [fetchTrip, ensureScaffold]);
   useEffect(() => {
     if (!tripId) return;
     supabase.from("trip_costs")

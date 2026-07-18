@@ -4,7 +4,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Camera, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { createDestinationPhoto, listOwnerTripDays } from "@/lib/photos.functions";
+import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { formatDate } from "@/lib/trip-data";
+import { useApp } from "@/lib/app-state";
 
 type Day = { id: string; day_date: string; title: string | null };
 
@@ -17,6 +19,8 @@ type Day = { id: string; day_date: string; title: string | null };
 export function StoryUploader() {
   const listDays = useServerFn(listOwnerTripDays);
   const createPhoto = useServerFn(createDestinationPhoto);
+  const ensureScaffold = useServerFn(ensureTripScaffold);
+  const { liveFix } = useApp();
   const qc = useQueryClient();
 
   const [days, setDays] = useState<Day[]>([]);
@@ -28,17 +32,28 @@ export function StoryUploader() {
   const [ok, setOk] = useState<string | null>(null);
 
   useEffect(() => {
+    const pickDefault = (rows: any[]) => {
+      setDays(rows);
+      if (rows.length && !dayId) {
+        const today = new Date().toISOString().slice(0, 10);
+        const active =
+          rows.find((r) => r.day_date === today) ??
+          rows.filter((r) => r.day_date <= today).slice(-1)[0] ??
+          rows[0];
+        setDayId(active.id);
+      }
+    };
     listDays()
-      .then((rows: any[]) => {
-        setDays(rows);
-        if (rows.length && !dayId) {
-          const today = new Date().toISOString().slice(0, 10);
-          const active =
-            rows.find((r) => r.day_date === today) ??
-            rows.filter((r) => r.day_date <= today).slice(-1)[0] ??
-            rows[0];
-          setDayId(active.id);
+      .then(async (rows: any[]) => {
+        if (rows.length === 0) {
+          // Fresh database: create the trip, days, and photo bucket, then retry.
+          try {
+            await ensureScaffold();
+            pickDefault(await listDays());
+            return;
+          } catch { /* not the owner or scaffold failed — leave empty */ }
         }
+        pickDefault(rows);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,6 +77,9 @@ export function StoryUploader() {
           storagePath: path,
           caption: caption.trim() || null,
           isCover: false,
+          // Pin the photo to the map at the spot it was posted from.
+          lat: liveFix?.lat ?? null,
+          lng: liveFix?.lng ?? null,
         },
       });
       setFile(null);
