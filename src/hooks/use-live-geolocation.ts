@@ -35,6 +35,7 @@ export function useLiveGeolocation(): LiveGeolocation {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           ts: pos.timestamp || Date.now(),
+          accuracyM: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : undefined,
         });
       },
       (err) => {

@@ -3,9 +3,12 @@ import { useServerFn } from "@tanstack/react-start";
 import { useApp } from "@/lib/app-state";
 import { useAdminAuth } from "@/lib/admin-auth";
 import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
-import { getDefaultTrip, recordLocationPoint, getPublicLatestLocation } from "@/lib/tracking.functions";
+import { getDefaultTrip, recordLocationPoint, getLatestLocation, getPublicLatestLocation } from "@/lib/tracking.functions";
 
 const PUBLIC_POLL_MS = 5 * 60 * 1000;
+const ADMIN_POLL_MS = 2 * 60 * 1000;
+// Don't record fixes worse than this (e.g. desktop WiFi/IP guesses) into the trail.
+const MAX_RECORD_ACCURACY_M = 300;
 
 /**
  * App-wide tracking sync:
@@ -19,6 +22,7 @@ export function useTripTrackingSync() {
   const geo = useLiveGeolocation();
   const getTrip = useServerFn(getDefaultTrip);
   const recordFn = useServerFn(recordLocationPoint);
+  const latestFn = useServerFn(getLatestLocation);
   const publicFn = useServerFn(getPublicLatestLocation);
   const tripIdRef = useRef<string | null>(null);
   const lastSentRef = useRef<number>(0);
@@ -44,9 +48,12 @@ export function useTripTrackingSync() {
   }, [isAdmin, role, geoOptIn, setGeoOptIn]);
 
   // Owner: persist each new fix to the DB (min 60s between writes).
+  // Skip low-accuracy fixes (desktop WiFi/IP guesses) so a PC logged in as
+  // owner can't pollute the truck's trail — only real GPS gets recorded.
   useEffect(() => {
     if (!isAdmin || role !== "owner") return;
     if (!liveFix || !tripIdRef.current) return;
+    if (liveFix.accuracyM != null && liveFix.accuracyM > MAX_RECORD_ACCURACY_M) return;
     const now = Date.now();
     if (now - lastSentRef.current < 60_000) return;
     lastSentRef.current = now;
@@ -55,29 +62,41 @@ export function useTripTrackingSync() {
         tripId: tripIdRef.current,
         lat: liveFix.lat,
         lng: liveFix.lng,
+        accuracyM: liveFix.accuracyM,
         ts: new Date(liveFix.ts).toISOString(),
       },
     }).catch(() => {});
   }, [isAdmin, role, liveFix, recordFn]);
 
-  // Non-admins: poll the public coarse location so map/home reflect the trip.
+  // EVERYONE polls the latest stored fix, so any device (including a PC
+  // logged in as admin) shows where the truck actually is. Admins read the
+  // precise authenticated feed; the public gets the coarse one. A polled fix
+  // only replaces the local one when it's newer — a phone with live GPS in
+  // hand keeps its own fresher position.
+  const liveFixTsRef = useRef<number>(0);
+  liveFixTsRef.current = liveFix?.ts ?? 0;
   useEffect(() => {
-    if (isAdmin) return;
     let alive = true;
-    const tick = () =>
-      publicFn()
-        .then((row) => {
-          if (!alive || !row) return;
-          setLiveFix({ lat: row.lat, lng: row.lng, ts: new Date(row.ts).getTime() });
-        })
-        .catch(() => {});
+    const tick = () => {
+      const apply = (row: { lat: number; lng: number; ts: string } | null | undefined) => {
+        if (!alive || !row) return;
+        const ts = new Date(row.ts).getTime();
+        if (ts <= liveFixTsRef.current) return;
+        setLiveFix({ lat: row.lat, lng: row.lng, ts });
+      };
+      if (isAdmin && tripIdRef.current) {
+        latestFn({ data: { tripId: tripIdRef.current } }).then(apply).catch(() => {});
+      } else {
+        publicFn().then(apply).catch(() => {});
+      }
+    };
     tick();
-    const id = window.setInterval(tick, PUBLIC_POLL_MS);
+    const id = window.setInterval(tick, isAdmin ? ADMIN_POLL_MS : PUBLIC_POLL_MS);
     return () => {
       alive = false;
       window.clearInterval(id);
     };
-  }, [isAdmin, publicFn, setLiveFix]);
+  }, [isAdmin, latestFn, publicFn, setLiveFix]);
 
   return geo;
 }

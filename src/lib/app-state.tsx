@@ -42,8 +42,8 @@ interface AppState {
   setGeoOptIn: (v: boolean) => void;
 
   // Latest in-memory GPS fix (set by Tracking page; read by Today/Itinerary maps)
-  liveFix: { lat: number; lng: number; ts: number } | null;
-  setLiveFix: (f: { lat: number; lng: number; ts: number } | null) => void;
+  liveFix: { lat: number; lng: number; ts: number; accuracyM?: number } | null;
+  setLiveFix: (f: { lat: number; lng: number; ts: number; accuracyM?: number } | null) => void;
 
   // Points
   individualPoints: number;
