@@ -15,6 +15,12 @@ on:
     branches: [main]
     paths: ['supabase/migrations/**']
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'linked = existing Lovable-era DB, fresh = brand-new empty project'
+        type: choice
+        options: [linked, fresh]
+        default: linked
 
 jobs:
   push-migrations:
@@ -32,6 +38,7 @@ jobs:
         run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
 
       - name: Mark Lovable-era migrations as already applied
+        if: ${{ inputs.mode != 'fresh' }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
