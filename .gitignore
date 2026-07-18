@@ -34,3 +34,7 @@ dist-ssr
 # secrets
 .env
 package-lock.json  # bun.lock is canonical; npm lock is local-only
+
+# local-only env variants (e.g. .env.sandbox); keep the template
+.env.*
+!.env.example
