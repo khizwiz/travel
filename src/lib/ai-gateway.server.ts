@@ -43,6 +43,23 @@ export function aiModel(): string {
   }
 }
 
+// Shared chat call with self-healing model fallback: when Google retires the
+// configured model for this API key (404), retry once on the rolling alias.
+export async function aiChat(payload: Record<string, unknown>): Promise<Response> {
+  const call = (model: string) =>
+    fetch(aiUrl(), {
+      method: "POST",
+      headers: lovableAiHeaders(),
+      body: JSON.stringify({ model, ...payload }),
+    });
+  let res = await call(aiModel());
+  if (res.status === 404 && provider() === "gemini") {
+    const body = await res.clone().text().catch(() => "");
+    if (/model/i.test(body)) res = await call("gemini-flash-latest");
+  }
+  return res;
+}
+
 export function lovableAiHeaders(): Record<string, string> {
   switch (provider()) {
     case "anthropic":

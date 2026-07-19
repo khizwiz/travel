@@ -86,9 +86,13 @@ function TransportIcon({ kind, className }: { kind: string; className?: string }
 }
 
 function ItineraryPage() {
-  const { activeDayId } = useApp();
+  const { activeDayId, liveFix } = useApp();
   const { isAdmin, role } = useAdminAuth();
-  const progress = useMemo(() => getTripProgress(), []);
+  // GPS-aware: with a live fix the current day follows the nearest itinerary
+  // destination (within 150 km) instead of the calendar — being ahead of or
+  // behind schedule shows correctly.
+  const live = liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
+  const progress = useMemo(() => getTripProgress(new Date(), live), [live?.lat, live?.lng]);
   const liveIdx = progress.index;
   const { map: overridesByDate } = usePlanOverrides();
   const effectiveDays = useMemo<ItineraryDay[]>(() => {

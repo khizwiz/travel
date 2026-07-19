@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
+import { aiChat } from "./ai-gateway.server";
 
 const SYSTEM = `You are a road-trip local scout for a family driving a Mitsubishi L200 across Europe (Istanbul → across Europe → back).
 Given a GPS coordinate, return interesting things to see and do within 50 km, focused on:
@@ -76,18 +76,13 @@ export const getNearbySuggestions = createServerFn({ method: "POST" })
         `GPS: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}` +
         (data.cityHint ? ` (near ${data.cityHint})` : "") +
         `. Return suggestions as JSON only.`;
-      const r = await fetch(aiUrl(), {
-        method: "POST",
-        headers: lovableAiHeaders(),
-        body: JSON.stringify({
-          model: aiModel(),
-          messages: [
-            { role: "system", content: SYSTEM },
-            { role: "user", content: userMsg },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.6,
-        }),
+      const r = await aiChat({
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: userMsg },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.6,
       });
       if (r.status === 429) return { error: "Rate limited — try again in a moment." };
       if (r.status === 402) return { error: "AI credits exhausted." };

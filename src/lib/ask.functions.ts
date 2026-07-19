@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
+import { aiChat } from "./ai-gateway.server";
 
 const SYSTEM = `You are "Ask Tripping", the in-app assistant for the Tripping road-trip journal.
 Trip: Istanbul → across Europe → back to Istanbul, July–August 2026, driven by Khizar (with Simona and their son Fez for parts).
@@ -27,15 +27,7 @@ export const askTripping = createServerFn({ method: "POST" })
         ...(data.context ? [{ role: "system", content: `APP CONTEXT:\n${data.context}` }] : []),
         { role: "user", content: data.question },
       ];
-      const r = await fetch(aiUrl(), {
-        method: "POST",
-        headers: lovableAiHeaders(),
-        body: JSON.stringify({
-          model: aiModel(),
-          messages,
-          temperature: 0.4,
-        }),
-      });
+      const r = await aiChat({ messages, temperature: 0.4 });
       if (r.status === 429) return { error: "Rate limited — try again in a moment." };
       if (r.status === 402) return { error: "AI credits exhausted." };
       if (!r.ok) {

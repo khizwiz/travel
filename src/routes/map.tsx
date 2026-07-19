@@ -33,7 +33,12 @@ function TrackingPage() {
   const geo = useLiveGeolocation();
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
-  const progress = useMemo(() => getTripProgress(), []);
+  // GPS-aware progress (nearest destination within 150 km wins over calendar).
+  const liveForProgress = liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
+  const progress = useMemo(
+    () => getTripProgress(new Date(), liveForProgress),
+    [liveForProgress?.lat, liveForProgress?.lng],
+  );
 
   // Build ordered waypoints from itinerary (de-duplicated, preserving order).
   const allWaypoints: { lat: number; lng: number; label: string; dayIdx: number }[] = [];
@@ -60,7 +65,9 @@ function TrackingPage() {
   const shownWaypoints = isAdmin ? allWaypoints : coveredWaypoints;
   const coveredIndex = coveredWaypoints.length;
 
-  const live = geo.enabled && liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
+  // Show the newest known position for EVERYONE — passengers and viewers get
+  // the polled DB fix even with their own geolocation off.
+  const live = liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
   const near = live ? nearestCity(live) : null;
 
   const fetchTrip = useServerFn(getDefaultTrip);

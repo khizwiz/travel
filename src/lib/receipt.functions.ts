@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
+import { aiChat } from "./ai-gateway.server";
 
 const CURRENCIES = [
   "EUR", "USD", "TRY", "BGN", "RON", "HUF", "CZK", "PLN", "CHF", "RSD", "BAM", "MKD", "ALL",
@@ -29,24 +29,19 @@ export const extractReceipt = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     try {
-      const r = await fetch(aiUrl(), {
-        method: "POST",
-        headers: lovableAiHeaders(),
-        body: JSON.stringify({
-          model: aiModel(),
-          messages: [
-            { role: "system", content: SYSTEM },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Extract the payment from this receipt. JSON only." },
-                { type: "image_url", image_url: { url: data.imageDataUrl } },
-              ],
-            },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0,
-        }),
+      const r = await aiChat({
+        messages: [
+          { role: "system", content: SYSTEM },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Extract the payment from this receipt. JSON only." },
+              { type: "image_url", image_url: { url: data.imageDataUrl } },
+            ],
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0,
       });
       if (r.status === 429) return { error: "Rate limited — try again in a moment." };
       if (!r.ok) {
