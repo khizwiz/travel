@@ -32,15 +32,73 @@ export interface PlaceSuggestion {
 export const getCitySuggestions = createServerFn({ method: "GET" })
   .inputValidator((d: unknown) => input.parse(d))
   .handler(async ({ data }): Promise<{ places: PlaceSuggestion[] }> => {
+    const cacheKey = `places-v2:${data.city.trim().toLowerCase()}`;
+    const cached = await cacheRead(cacheKey);
+    if (cached) return { places: cached };
+
     const viaGateway = await tryLovableGateway(data.city, data.country);
-    if (viaGateway && viaGateway.length > 0) return { places: viaGateway };
+    if (viaGateway && viaGateway.length > 0) {
+      await cacheWrite(cacheKey, viaGateway);
+      return { places: viaGateway };
+    }
 
     const viaGoogle = await tryGoogleDirect(data.city, data.country);
-    if (viaGoogle && viaGoogle.length > 0) return { places: viaGoogle };
+    if (viaGoogle && viaGoogle.length > 0) {
+      await cacheWrite(cacheKey, viaGoogle);
+      return { places: viaGoogle };
+    }
 
     const viaWiki = await tryWikipedia(data.city, data.country);
+    if (viaWiki && viaWiki.length > 0) await cacheWrite(cacheKey, viaWiki);
     return { places: viaWiki ?? [] };
   });
+
+// Attractions are static — cache successful lookups in app_config (service
+// role) so Wikipedia is hit at most once per city per month, not 30x per
+// page load (Wikimedia 429-throttles bursts from Cloudflare egress IPs).
+const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+
+async function cacheRead(key: string): Promise<PlaceSuggestion[] | null> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: row } = await supabaseAdmin
+      .from("app_config")
+      .select("value, updated_at")
+      .eq("key", key)
+      .maybeSingle();
+    const places = (row?.value as any)?.places as PlaceSuggestion[] | undefined;
+    if (!places?.length) return null;
+    if (Date.now() - new Date(row!.updated_at).getTime() > CACHE_TTL_MS) return null;
+    return places;
+  } catch (e) {
+    console.error("[places] cache read failed", e);
+    return null;
+  }
+}
+
+async function cacheWrite(key: string, places: PlaceSuggestion[]): Promise<void> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin
+      .from("app_config")
+      .upsert({ key, value: { places } as any, updated_at: new Date().toISOString() });
+  } catch (e) {
+    console.error("[places] cache write failed", e);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// fetch with one retry when Wikimedia rate-limits us (429).
+async function wikiFetch(url: string): Promise<Response> {
+  let res = await fetch(url, { headers: WIKI_UA });
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get("retry-after")) || 0;
+    await sleep(Math.min(retryAfter * 1000, 3000) || 1200 + Math.random() * 1800);
+    res = await fetch(url, { headers: WIKI_UA });
+  }
+  return res;
+}
 
 function googleTextBody(city: string, country?: string): string {
   const query = country ? `top attractions in ${city}, ${country}` : `top attractions in ${city}`;
@@ -120,36 +178,60 @@ async function tryGoogleDirect(city: string, country?: string): Promise<PlaceSug
 // churches, viewpoints. No ratings, but real sights with real names.
 async function tryWikipedia(city: string, country?: string): Promise<PlaceSuggestion[] | null> {
   try {
-    const q = encodeURIComponent(country ? `${city}, ${country}` : city);
-    const cityRes = await fetch(
+    // Spread the burst: the itinerary fires ~16 of these concurrently and
+    // Wikimedia rate-limits simultaneous requests from one egress IP.
+    await sleep(Math.random() * 2000);
+
+    // "Ancona (ferry)" -> "Ancona", "Pelion / Volos area" -> "Pelion"
+    const cleanCity = city.split("/")[0].replace(/\(.*?\)/g, "").trim() || city;
+
+    const q = encodeURIComponent(country ? `${cleanCity}, ${country}` : cleanCity);
+    const cityRes = await wikiFetch(
       `https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch=${q}&gsrlimit=1&prop=coordinates&colimit=1`,
-      { headers: WIKI_UA },
     );
-    if (!cityRes.ok) return null;
+    if (!cityRes.ok) {
+      console.error(`[places] wiki city-search ${cityRes.status} for ${city}`);
+      return null;
+    }
     const cityJson: any = await cityRes.json();
     const cityPage: any = Object.values(cityJson?.query?.pages ?? {})[0];
     const coord = cityPage?.coordinates?.[0];
-    if (!coord) return null;
+    if (!coord) {
+      console.error(
+        `[places] wiki no-coord for ${city}: ${JSON.stringify(cityJson).slice(0, 400)}`,
+      );
+      return null;
+    }
 
-    const geoRes = await fetch(
+    const geoRes = await wikiFetch(
       `https://en.wikipedia.org/w/api.php?action=query&format=json&generator=geosearch` +
         `&ggscoord=${coord.lat}%7C${coord.lon}&ggsradius=10000&ggslimit=25` +
         `&prop=description%7Ccoordinates&colimit=25`,
-      { headers: WIKI_UA },
     );
-    if (!geoRes.ok) return null;
+    if (!geoRes.ok) {
+      console.error(`[places] wiki geosearch ${geoRes.status} for ${city}`);
+      return null;
+    }
     const geoJson: any = await geoRes.json();
     const pages: any[] = Object.values(geoJson?.query?.pages ?? {});
     const cityTitle = String(cityPage?.title ?? city).toLowerCase();
     const skip = /(district|municipality|province|county|railway station|airport|university|hospital|football|stadium of|neighborhood|suburb)/i;
-    const places: PlaceSuggestion[] = pages
-      .filter((p) => {
-        const t = String(p.title ?? "").toLowerCase();
-        if (!p.title || t === cityTitle || t === city.toLowerCase()) return false;
-        const desc = String(p.description ?? "");
-        if (skip.test(desc) || skip.test(t)) return false;
-        return true;
-      })
+    // Historical events, institutions and admin areas are not sights to visit.
+    const skipStrict =
+      /(bombing|siege|battle|congress of|treaty|massacre|uprising|\bwar\b|court|bank of|society|academy|philharmonic|orchestra|railway|metro|tram|archdiocese|diocese|endowment|comune in|municipal unit|community in|settlement in|\bformer\b|capital of|ministry|embassy|headquarters)/i;
+    const lenient = pages.filter((p) => {
+      const t = String(p.title ?? "").toLowerCase();
+      if (!p.title || t === cityTitle || t === city.toLowerCase()) return false;
+      const desc = String(p.description ?? "");
+      if (skip.test(desc) || skip.test(t)) return false;
+      return true;
+    });
+    const strict = lenient.filter(
+      (p) => !skipStrict.test(`${p.title ?? ""} ${p.description ?? ""}`),
+    );
+    // Rural stops may have little besides villages — fall back to the lenient
+    // list rather than showing nothing.
+    const places: PlaceSuggestion[] = (strict.length >= 4 ? strict : lenient)
       .slice(0, 10)
       .map((p) => {
         const c = p.coordinates?.[0];
@@ -161,6 +243,7 @@ async function tryWikipedia(city: string, country?: string): Promise<PlaceSugges
           location: c ? { latitude: c.lat, longitude: c.lon } : undefined,
         };
       });
+    console.log(`[places] wiki ok for ${city}: ${pages.length} pages -> ${places.length} kept`);
     return places;
   } catch (e) {
     console.error("[places] wikipedia failed", e);
