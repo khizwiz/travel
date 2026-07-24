@@ -5,15 +5,25 @@ import { Fuel, MapPin, ExternalLink, Loader2, GaugeCircle, RotateCcw, Route } fr
 import { getFuelStationsNearby } from "@/lib/fuel-stations.functions";
 import { getFuelStatus, recordFuelFill, undoLastFill } from "@/lib/fuel.functions";
 import { VEHICLE } from "@/lib/trip-data";
-import { useAdminAuth } from "@/lib/admin-auth";
+import { useCan } from "@/lib/use-role";
 
 interface Props {
   live: { lat: number; lng: number } | null;
   cityLabel?: string;
 }
 
+/**
+ * Fuel gauge, station search and fill logging. Members only, whole card.
+ *
+ * This card is mounted on both / and /vehicle, which is why gating it on one
+ * screen never fixed the leak. The gate lives here now, so every mount point
+ * inherits it, and the three server functions it calls each enforce the same
+ * capability independently.
+ */
 export function FuelPromptCard({ live, cityLabel }: Props) {
-  const { isAdmin } = useAdminAuth();
+  const canViewFuel = useCan("fuel.viewStatus");
+  const canRecordFill = useCan("fuel.recordFill");
+  const canSearchStations = useCan("fuel.searchStations");
   const qc = useQueryClient();
   const [manualOpen, setManualOpen] = useState(false);
   const [radiusKm, setRadiusKm] = useState(10);
@@ -26,17 +36,18 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
   const undoFn = useServerFn(undoLastFill);
 
   // Fuel status is computed on the server from the whole GPS trail — shared
-  // across every device, detours included. Public: works logged out too.
+  // across every device, detours included.
   const { data: fuel } = useQuery({
     queryKey: ["fuel-status"],
     queryFn: () => statusFn({ data: {} }),
     refetchInterval: 60_000,
     staleTime: 30_000,
+    enabled: canViewFuel,
   });
 
   const pct = fuel?.tankPct ?? null;
   const low = pct !== null && pct <= VEHICLE.lowFuelWarnPct;
-  const shouldSearch = ((low && !!live) || manualOpen) && !!live;
+  const shouldSearch = canSearchStations && ((low && !!live) || manualOpen) && !!live;
 
   const stationsFn = useServerFn(getFuelStationsNearby);
   const { data, isLoading, isError } = useQuery({
@@ -89,6 +100,9 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
       : `assuming ${fuel.learnedLPer100} L/100 km`
     : "";
 
+  // Logged-out visitors get no fuel card at all — not an empty shell.
+  if (!canViewFuel) return null;
+
   return (
     <section className="card-elev p-4">
       <div className="flex items-center gap-2">
@@ -108,7 +122,7 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
           <div className="text-xs text-muted-foreground">
             {fuel?.hasData
               ? `${fuel.sinceKm} km since ${filledLabel ? `refuel ${filledLabel}` : "trip start"} · ${consumptionNote}`
-              : isAdmin
+              : canRecordFill
                 ? "No GPS distance yet — keep the tracker phone logged in with location on."
                 : "Fuel tracking follows the live GPS route."}
           </div>
@@ -137,7 +151,7 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
         </div>
       )}
 
-      {isAdmin && !fillOpen && (
+      {canRecordFill && !fillOpen && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             onClick={() => setFillOpen(true)}
@@ -163,7 +177,7 @@ export function FuelPromptCard({ live, cityLabel }: Props) {
         </div>
       )}
 
-      {isAdmin && fillOpen && (
+      {canRecordFill && fillOpen && (
         <div className="mt-3 rounded-lg border border-border p-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             How many litres went in? (optional)

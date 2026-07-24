@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { requireCapability } from "@/integrations/supabase/permission-middleware";
 import { z } from "zod";
 
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/google_maps";
@@ -23,13 +24,18 @@ export interface PlaceSuggestion {
 }
 
 /**
- * Public read: top attractions & things to do near a city.
+ * Members only: top attractions & things to do near a city.
+ *
+ * Was an unauthenticated "public read", which is the "public users can see
+ * per-city suggestions in the itinerary" bug.
+ *
  * Provider chain:
  *   1. Google Places via the Lovable connector gateway (Lovable cloud only)
  *   2. Google Places API (New) directly, if GOOGLE_MAPS_API_KEY_1 is set
  *   3. Wikipedia geosearch — keyless, works everywhere (default)
  */
 export const getCitySuggestions = createServerFn({ method: "GET" })
+  .middleware([requireCapability("suggestions.city")])
   .inputValidator((d: unknown) => input.parse(d))
   .handler(async ({ data }): Promise<{ places: PlaceSuggestion[] }> => {
     const cacheKey = `places-v2:${data.city.trim().toLowerCase()}`;

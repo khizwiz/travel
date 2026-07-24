@@ -97,12 +97,23 @@ export const verifyAdminPassword = createServerFn({ method: "POST" })
       };
     }
 
-    // Crew: Miezko — passenger with admin UI except bookings/documents/settings.
+    // Crew: Miezko — a member, not an admin. Under the three-role matrix
+    // (@/lib/permissions) that is everything except travellers and settings.
     const { userId, supabaseAdmin } = await provisionUser(crewEmail(), data.password, "Miezko");
-    // Grant 'owner' app-role so has_role() / is_owner() checks pass for admin-style writes.
+    // Deliberately 'companion', NOT 'owner'. Granting 'owner' here used to make
+    // every is_owner()/has_role(...,'owner') RLS policy pass for crew, so the
+    // hidden nav links were the only thing standing between crew and the
+    // owner's documents, receipts and moderation tables — and typing the URL
+    // walked straight past it.
     await supabaseAdmin
       .from("user_roles")
-      .upsert({ user_id: userId, role: "owner" }, { onConflict: "user_id,role" });
+      .upsert({ user_id: userId, role: "companion" }, { onConflict: "user_id,role" });
+    // Clear any 'owner' row left over from before this was fixed.
+    await supabaseAdmin
+      .from("user_roles")
+      .delete()
+      .eq("user_id", userId)
+      .eq("role", "owner");
 
     // Add as active trip member from trip start through Jul 21 night.
     const { data: trip } = await supabaseAdmin

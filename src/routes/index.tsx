@@ -12,6 +12,7 @@ import { DailyPlanPrompt } from "@/components/DailyPlanPrompt";
 import { NearbyAiCard } from "@/components/NearbyAiCard";
 
 import { useApp } from "@/lib/app-state";
+import { useCan } from "@/lib/use-role";
 import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -33,6 +34,7 @@ export const Route = createFileRoute("/")({
 
 function HomePage() {
   const { liveFix } = useApp();
+  const canAsk = useCan("ask.use");
   const geo = useLiveGeolocation();
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
@@ -261,11 +263,15 @@ function HomePage() {
           <div className="mt-2 font-display text-lg">Achievements</div>
           <p className="mt-1 text-xs text-muted-foreground">Badges, points and playful rewards.</p>
         </Link>
-        <Link to="/ask" className="card-elev p-5 transition hover:border-primary/40">
-          <Sparkles className="h-5 w-5 text-primary" />
-          <div className="mt-2 font-display text-lg">Ask Tripping</div>
-          <p className="mt-1 text-xs text-muted-foreground">Travel questions, answered instantly.</p>
-        </Link>
+        {canAsk && (
+          <Link to="/ask" className="card-elev p-5 transition hover:border-primary/40">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <div className="mt-2 font-display text-lg">Ask Tripping</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Travel questions, answered instantly.
+            </p>
+          </Link>
+        )}
       </section>
     </div>
   );

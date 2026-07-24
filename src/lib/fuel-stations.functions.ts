@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { requireCapability } from "@/integrations/supabase/permission-middleware";
 import { z } from "zod";
 
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/google_maps";
@@ -21,13 +22,19 @@ const input = z.object({
 });
 
 /**
- * Public: nearest fuel stations (low-fuel prompt + manual search).
+ * Members only: nearest fuel stations (low-fuel prompt + manual search).
+ *
+ * Was unauthenticated, which is the "non-admins can find fuel stations" bug —
+ * hiding the button on one screen never helped, because the endpoint answered
+ * anyone who asked and the card is mounted on two routes.
+ *
  * Provider chain:
  *   1. Lovable connector gateway (only works inside Lovable cloud)
  *   2. Google Places API (New) if GOOGLE_MAPS_API_KEY_1 is set server-side
  *   3. OpenStreetMap Overpass API — keyless, works everywhere (default)
  */
 export const getFuelStationsNearby = createServerFn({ method: "GET" })
+  .middleware([requireCapability("fuel.searchStations")])
   .inputValidator((d: unknown) => input.parse(d))
   .handler(async ({ data }): Promise<{ stations: FuelStation[] }> => {
     const radius = data.radiusMeters ?? 10000;

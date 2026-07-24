@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { ExternalLink, Sparkles, Star } from "lucide-react";
 import { getCitySuggestions } from "@/lib/places.functions";
+import { useCan } from "@/lib/use-role";
 
 interface Props {
   city: string;
@@ -9,16 +10,21 @@ interface Props {
   limit?: number;
 }
 
-/** Public-safe: Google Places top attractions for a city. */
+/**
+ * Top attractions for a city. Members only — the server enforces the same rule,
+ * this just avoids rendering a box that would fail for a logged-out visitor.
+ */
 export function CitySuggestions({ city, country, limit = 5 }: Props) {
+  const allowed = useCan("suggestions.city");
   const fetchSuggestions = useServerFn(getCitySuggestions);
   const q = useQuery({
     queryKey: ["place-suggestions", city, country ?? ""],
     queryFn: () => fetchSuggestions({ data: { city, country } }),
     staleTime: 1000 * 60 * 60 * 24,
-    enabled: !!city && !city.startsWith("__open_"),
+    enabled: allowed && !!city && !city.startsWith("__open_"),
   });
 
+  if (!allowed) return null;
   if (!city || city.startsWith("__open_")) return null;
 
   const places = (q.data?.places ?? []).slice(0, limit);

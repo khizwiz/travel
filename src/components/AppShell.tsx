@@ -30,6 +30,8 @@ import { useAuth } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { useT } from "@/lib/i18n";
 import { useTripTrackingSync } from "@/hooks/use-trip-tracking-sync";
+import { useRole } from "@/lib/use-role";
+import { can, routeCapability, type Role } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 import logoAsset from "@/assets/logo.png.asset.json";
@@ -41,7 +43,13 @@ interface NavItem {
   icon: LucideIcon;
 }
 
-const PUBLIC_NAV: NavItem[] = [
+/**
+ * Every destination in the app, in display order. Visibility is decided by the
+ * capability each route needs (`@/lib/permissions`) — not by hand-kept per-role
+ * lists, which is how /bookings and /documents ended up merely *hidden* from
+ * crew while remaining reachable by typing the URL.
+ */
+const ALL_NAV: NavItem[] = [
   { to: "/", labelKey: "nav.home", hint: "Live trip", icon: Home },
   { to: "/itinerary", labelKey: "nav.itinerary", hint: "Dates and cities", icon: CalendarDays },
   { to: "/story", labelKey: "nav.story", hint: "Feed", icon: Rss },
@@ -49,23 +57,13 @@ const PUBLIC_NAV: NavItem[] = [
   { to: "/vehicle", labelKey: "nav.vehicle", hint: "The truck", icon: Car },
   { to: "/achievements", labelKey: "nav.achievements", hint: "Badges", icon: Award },
   { to: "/ask", labelKey: "nav.ask", hint: "AI assistant", icon: Sparkles },
+  { to: "/bookings", labelKey: "nav.bookings", hint: "Trip", icon: Upload },
+  { to: "/cost", labelKey: "nav.cost", hint: "Trip", icon: Receipt },
+  { to: "/documents", labelKey: "nav.documents", hint: "Trip", icon: FileText },
+  { to: "/checklist", labelKey: "nav.checklist", hint: "Trip", icon: CheckSquare },
+  { to: "/travellers", labelKey: "nav.travellers", hint: "Owner", icon: Users },
+  { to: "/settings", labelKey: "nav.settings", hint: "Owner", icon: SettingsIcon },
 ];
-
-const ADMIN_NAV: NavItem[] = [
-  { to: "/bookings", labelKey: "nav.bookings", hint: "Admin", icon: Upload },
-  { to: "/cost", labelKey: "nav.cost", hint: "Admin", icon: Receipt },
-  { to: "/travellers", labelKey: "nav.travellers", hint: "Admin", icon: Users },
-  { to: "/documents", labelKey: "nav.documents", hint: "Admin", icon: FileText },
-  { to: "/checklist", labelKey: "nav.checklist", hint: "Admin", icon: CheckSquare },
-  { to: "/settings", labelKey: "nav.settings", hint: "Admin", icon: SettingsIcon },
-];
-
-// Miezko (crew) sees admin tools but not bookings/documents/settings/travellers.
-const CREW_HIDDEN = new Set<string>(["/bookings", "/documents", "/settings", "/travellers"]);
-const CREW_NAV: NavItem[] = ADMIN_NAV.filter((i) => !CREW_HIDDEN.has(i.to));
-
-// Regular members (email + password login) get the shared cost book.
-const MEMBER_NAV: NavItem[] = ADMIN_NAV.filter((i) => i.to === "/cost");
 
 // Mobile bottom tabs: 4 primary + More sheet with the rest.
 const MOBILE_PRIMARY: NavItem[] = [
@@ -82,6 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const t = useT();
   const { isAdmin, role, signIn, signOut, loading } = useAdminAuth();
   const { user, signOut: memberSignOut } = useAuth();
+  const { role: uiRole } = useRole();
   const isMember = !isAdmin && !!user;
   const [hydrated, setHydrated] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -101,10 +100,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // Plain computation, deliberately NOT a hook: the share-link early return
   // above means hook counts must not differ between renders/routes.
-  const adminNavForRole: NavItem[] =
-    role === "crew" ? CREW_NAV : role === "owner" ? ADMIN_NAV : isMember ? MEMBER_NAV : [];
-  const nav: NavItem[] =
-    hydrated && (isAdmin || isMember) ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV;
+  //
+  // Before hydration we render the public set, so server and client markup
+  // agree; the real role lands on the first client render.
+  const effectiveRole: Role = hydrated ? uiRole : "public";
+  const nav: NavItem[] = ALL_NAV.filter((item) => {
+    const cap = routeCapability(item.to);
+    return cap ? can(effectiveRole, cap) : true;
+  });
 
   const LANG_ORDER: Array<"en" | "tr" | "pl" | "it"> = ["en", "tr", "pl", "it"];
   const nextLanguage = () => {
@@ -270,7 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {moreOpen && (
         <MoreSheet
           onClose={() => setMoreOpen(false)}
-          items={hydrated && (isAdmin || isMember) ? [...PUBLIC_NAV, ...adminNavForRole] : PUBLIC_NAV}
+          items={nav}
           pathname={pathname}
           t={t}
         />

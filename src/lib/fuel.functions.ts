@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireCapability } from "@/integrations/supabase/permission-middleware";
 import { z } from "zod";
 import { haversineKm } from "@/lib/geo";
 import { VEHICLE } from "@/lib/trip-data";
@@ -238,9 +239,11 @@ async function buildStatus(tripId: string): Promise<FuelStatus> {
 
 const tripInput = z.object({ tripId: z.string().uuid().optional() });
 
-// Public read: anyone (even logged out) can see fuel status. Only aggregate
-// numbers leave the server — never raw coordinates.
+// Members only. Was a public read: although it emits no raw coordinates, tank
+// level and learned l/100km are live operational detail about where the family
+// is and how far they can get, which is not a visitor's business.
 export const getFuelStatus = createServerFn({ method: "GET" })
+  .middleware([requireCapability("fuel.viewStatus")])
   .inputValidator((d: unknown) => tripInput.parse(d ?? {}))
   .handler(async ({ data }): Promise<FuelStatus | null> => {
     const trip = await resolveTrip(data.tripId);

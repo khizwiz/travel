@@ -12,7 +12,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getNearbySuggestions, type NearbyPick } from "@/lib/nearby.functions";
-import { useAuth } from "@/lib/auth";
+import { useCan } from "@/lib/use-role";
 
 const ICONS: Record<NearbyPick["kind"], any> = {
   brutalist: Building2,
@@ -42,7 +42,7 @@ interface Props {
  */
 export function NearbyAiCard({ live, cityLabel }: Props) {
   const fn = useServerFn(getNearbySuggestions);
-  const { user } = useAuth();
+  const allowed = useCan("suggestions.nearbyAi");
   // Bucket coords to ~0.1° (~11 km) so we don't refetch on every micro-move.
   const bucketLat = live ? Math.round(live.lat * 10) / 10 : null;
   const bucketLng = live ? Math.round(live.lng * 10) / 10 : null;
@@ -51,12 +51,18 @@ export function NearbyAiCard({ live, cityLabel }: Props) {
     queryKey: ["nearby-ai", bucketLat, bucketLng, cityLabel ?? ""],
     queryFn: () => fn({ data: { lat: live!.lat, lng: live!.lng, cityHint: cityLabel } }),
     // The AI endpoint requires a login — don't fire doomed requests for visitors.
-    enabled: !!live && !!user,
+    enabled: !!live && allowed,
     staleTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
-  if (!live || !user) {
+  // Visitors get no card at all. The old "log in to get AI picks" block was the
+  // empty "suggestions" section on the home page — an advert for a feature the
+  // reader cannot use, which just looked like something broken.
+  if (!allowed) return null;
+
+  // Signed in but no fix yet: say what's missing, since this one is actionable.
+  if (!live) {
     return (
       <section className="card-elev p-4">
         <header className="flex items-center gap-2">
@@ -64,9 +70,7 @@ export function NearbyAiCard({ live, cityLabel }: Props) {
           <h2 className="text-sm font-semibold">Nearby — brutalist, bars & sights</h2>
         </header>
         <p className="mt-2 text-xs text-muted-foreground">
-          {!user
-            ? "Log in (Admin or Member) to get AI picks within 50 km of where the truck is."
-            : "Enable location to get AI picks within 50 km of where the truck is."}
+          Enable location to get AI picks within 50 km of where the truck is.
         </p>
       </section>
     );
