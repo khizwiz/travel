@@ -41,17 +41,27 @@ export const listPublicAccommodations = createServerFn({ method: "GET" })
     if (!trip) return [];
     // PUBLIC endpoint: never expose booking references, prices, or private
     // notes — RLS deliberately restricts those to trip members.
+    //
+    // Plain queries joined in code: the embedded `itinerary_days!inner(...)`
+    // this replaced fails silently on this schema (CLAUDE.md), so the filter
+    // did not filter and `r.itinerary_days` came back undefined — every stay
+    // rendered with a null date.
+    const { data: days, error: dErr } = await supabaseAdmin
+      .from("itinerary_days")
+      .select("id, day_date")
+      .eq("trip_id", trip.id);
+    if (dErr) throw new Error(dErr.message);
+    const dayById = new Map((days ?? []).map((d) => [d.id as string, d]));
+    if (dayById.size === 0) return [];
+
     const { data, error } = await supabaseAdmin
       .from("accommodations")
-      .select(`
-        id, name, area_public, check_in, check_out,
-        itinerary_days!inner ( day_date, trip_id )
-      `)
-      .eq("itinerary_days.trip_id", trip.id);
+      .select("id, name, area_public, check_in, check_out, day_id")
+      .in("day_id", Array.from(dayById.keys()));
     if (error) throw new Error(error.message);
     return (data ?? []).map((r: any) => ({
       id: r.id,
-      day_date: r.itinerary_days?.day_date ?? null,
+      day_date: dayById.get(r.day_id)?.day_date ?? null,
       name: r.name,
       area_public: r.area_public,
       check_in: r.check_in,

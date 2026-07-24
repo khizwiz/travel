@@ -55,17 +55,11 @@ async function ensureOwner(supabase: any, userId: string, tripId: string) {
   if (!trip || trip.owner_id !== userId) throw new Error("Forbidden");
 }
 
-async function dayTravellers(supabase: any, tripId: string, day: string): Promise<
-  { user_id: string | null; child_key: string | null }[]
-> {
-  const { data } = await supabase
-    .from("itinerary_days")
-    .select("id, day_travellers(user_id, child_key)")
-    .eq("trip_id", tripId)
-    .eq("day_date", day)
-    .maybeSingle();
-  return (data?.day_travellers ?? []) as any;
-}
+// `dayTravellers()` lived here: an unused helper that read the day roster via
+// an embedded `day_travellers(...)` select, which fails silently on this
+// schema. It was never called — materialiseSplitsUnified builds the roster
+// from plain trip_members queries — but it read like the authoritative source
+// of "who was present", which is a trap for the next person to change splits.
 
 // ---------- Create (owner or companion submission) ----------
 // splitAmong: unified participant identifiers.
@@ -701,17 +695,28 @@ export const createCostShareSnapshot = createServerFn({ method: "POST" })
       .in("cost_id", (costs ?? []).map((c: any) => c.id));
     const { data: members } = await supabase
       .from("trip_members")
-      .select("user_id, profiles:user_id(display_name, email)")
+      .select("user_id")
       .eq("trip_id", data.tripId);
     const { data: trip } = await supabase
       .from("trips").select("owner_id, name").eq("id", data.tripId).single();
     const { data: ownerProf } = await supabase
       .from("profiles").select("id, display_name, email").eq("id", trip!.owner_id).single();
 
+    // Profiles fetched separately and joined here. The embedded
+    // `profiles:user_id(...)` this replaced fails silently on this schema
+    // (CLAUDE.md), so every member resolved to the "Traveller" fallback and
+    // the settlement listed who owes whom without naming anyone.
+    const memberIds = (members ?? [])
+      .map((m: any) => m.user_id)
+      .filter((v: unknown): v is string => !!v);
+    const { data: memberProfs } = memberIds.length
+      ? await supabase.from("profiles").select("id, display_name, email").in("id", memberIds)
+      : { data: [] as any[] };
+
     const nameFor: Record<string, string> = {};
     if (ownerProf) nameFor[ownerProf.id] = ownerProf.display_name ?? ownerProf.email ?? "Owner";
-    for (const m of members ?? []) {
-      nameFor[m.user_id] = (m as any).profiles?.display_name ?? (m as any).profiles?.email ?? "Traveller";
+    for (const p of memberProfs ?? []) {
+      nameFor[p.id] = p.display_name ?? p.email ?? "Traveller";
     }
 
     const paid = new Map<string, number>();
