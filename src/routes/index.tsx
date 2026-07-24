@@ -15,6 +15,9 @@ import { useApp } from "@/lib/app-state";
 import { useCan } from "@/lib/use-role";
 import { useLocation } from "@/hooks/use-location";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { getJourneyStats } from "@/lib/location.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -41,6 +44,18 @@ function HomePage() {
 
   const live = liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
   const progress = useMemo(() => getTripProgress(new Date(), live), [live?.lat, live?.lng]);
+
+  // Real driven distance from the GPS trail — the same walker the fuel gauge
+  // uses. Members only, so this simply stays absent for visitors.
+  const canSeeTrail = useCan("location.viewPrecise");
+  const fetchJourney = useServerFn(getJourneyStats);
+  const { data: journey } = useQuery({
+    queryKey: ["journey-stats"],
+    queryFn: () => fetchJourney({ data: {} }),
+    enabled: canSeeTrail,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60 * 1000,
+  });
   const start = ITINERARY[0]?.date;
   const end = ITINERARY[ITINERARY.length - 1]?.date;
 
@@ -137,10 +152,13 @@ function HomePage() {
                   <span className="blink-dot" /> Current area
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
+                  {/* The straight-line km to a hardcoded city centre used to be
+                      shown here. It was never a distance anyone could drive, so
+                      the name stands alone and real driven km live below. */}
                   {location.placeName
                     ? `${location.placeName}${location.country ? `, ${location.country}` : ""}`
                     : live && nearest
-                      ? `near ${nearest.name} · ${nearest.distanceKm.toFixed(0)} km`
+                      ? `near ${nearest.name}`
                       : `${currentCityName} area`}
                 </div>
               </div>
@@ -175,7 +193,9 @@ function HomePage() {
                     : "Not started"}
                 </div>
               </div>
-              <span className="chip chip-blue">Public</span>
+              <span className="chip chip-blue">
+                {journey?.hasData ? `${Math.round(journey.drivenKm)} km` : "Public"}
+              </span>
             </div>
             <div className="flex items-center justify-between gap-3 py-2.5">
               <div>

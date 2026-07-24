@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireCapability } from "@/integrations/supabase/permission-middleware";
 import { z } from "zod";
+import { drawablePath, getTrail, learnDetourFactor, resolveTripId } from "@/lib/location.service";
 
 /**
  * Turning real coordinates into real place names, and the recorded GPS trail
@@ -161,6 +162,11 @@ export interface RouteTrail {
   rawCount: number;
   /** True when OSRM matched the trail; false when this is the raw GPS line. */
   snapped: boolean;
+  /**
+   * Real driven distance for this trail, in km. Same number the fuel gauge
+   * uses — both come from the one walker in location.service.ts.
+   */
+  drivenKm: number;
 }
 
 const trailInput = z.object({
@@ -168,26 +174,6 @@ const trailInput = z.object({
   /** Cap on returned points; the map cannot usefully draw more. */
   maxPoints: z.number().int().min(50).max(4000).optional(),
 });
-
-// Matching quality guards, mirroring the cleaning in fuel.functions.ts so the
-// two features agree on what counts as a real fix.
-const MAX_ACCURACY_M = 500;
-const MIN_STEP_KM = 0.02;
-const MAX_SPEED_KMH = 160;
-
-function haversineKm(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number },
-): number {
-  const R = 6371;
-  const toRad = (v: number) => (v * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s));
-}
 
 /**
  * The route actually driven, as a road-following polyline.
@@ -208,55 +194,24 @@ export const getRouteTrail = createServerFn({ method: "GET" })
   .middleware([requireCapability("location.viewPrecise")])
   .inputValidator((d: unknown) => trailInput.parse(d ?? {}))
   .handler(async ({ data }): Promise<RouteTrail> => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const tripId = await resolveTripId(data.tripId);
+    if (!tripId) return { path: [], rawCount: 0, snapped: false, drivenKm: 0 };
 
-    let tripId = data.tripId;
-    if (!tripId) {
-      const { data: trip } = await supabaseAdmin
-        .from("trips")
-        .select("id")
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      tripId = trip?.id;
-    }
-    if (!tripId) return { path: [], rawCount: 0, snapped: false };
-
-    // Read the whole trail, paginated — PostgREST caps a single response.
-    const raw: Array<{ lat: number; lng: number; ts: string; accuracy_m: number | null }> = [];
-    const pageSize = 1000;
-    for (let page = 0; page < 50; page++) {
-      const from = page * pageSize;
-      const { data: rows, error } = await supabaseAdmin
-        .from("location_points")
-        .select("lat, lng, ts, accuracy_m")
-        .eq("trip_id", tripId)
-        .order("ts", { ascending: true })
-        .range(from, from + pageSize - 1);
-      if (error) throw new Error(error.message);
-      if (!rows?.length) break;
-      raw.push(...rows);
-      if (rows.length < pageSize) break;
-    }
-    if (raw.length === 0) return { path: [], rawCount: 0, snapped: false };
-
-    // Clean: drop fuzzy fixes, parked jitter, and impossible jumps.
-    const clean: Array<{ lat: number; lng: number }> = [];
-    let prev: { lat: number; lng: number; t: number } | null = null;
-    for (const p of raw) {
-      if (p.accuracy_m != null && p.accuracy_m > MAX_ACCURACY_M) continue;
-      const t = new Date(p.ts).getTime();
-      if (prev) {
-        const km = haversineKm(prev, p);
-        if (km < MIN_STEP_KM) continue;
-        const hours = (t - prev.t) / 3_600_000;
-        if (hours > 0 && km / hours > MAX_SPEED_KMH) continue;
-      }
-      clean.push({ lat: p.lat, lng: p.lng });
-      prev = { lat: p.lat, lng: p.lng, t };
+    // One walker, shared with the fuel gauge: the same fixes are rejected and
+    // the same distance comes out, so the drawn line and the odometer agree.
+    const trail = await getTrail(tripId);
+    const clean = drawablePath(trail);
+    const drivenKm = Math.round(trail.totalKm * 10) / 10;
+    if (trail.rawCount === 0) {
+      return { path: [], rawCount: 0, snapped: false, drivenKm: 0 };
     }
     if (clean.length < 2) {
-      return { path: clean.map((p) => [p.lat, p.lng]), rawCount: raw.length, snapped: false };
+      return {
+        path: clean.map((p) => [p.lat, p.lng]),
+        rawCount: trail.rawCount,
+        snapped: false,
+        drivenKm,
+      };
     }
 
     // Thin to the requested budget, always keeping the endpoints.
@@ -284,11 +239,87 @@ export const getRouteTrail = createServerFn({ method: "GET" })
 
     const snappedPath = await matchToRoads(thinned);
     const result: RouteTrail = snappedPath
-      ? { path: decimate(snappedPath, 6000), rawCount: raw.length, snapped: true }
-      : { path: thinned.map((p) => [p.lat, p.lng]), rawCount: raw.length, snapped: false };
+      ? { path: decimate(snappedPath, 6000), rawCount: trail.rawCount, snapped: true, drivenKm }
+      : {
+          path: thinned.map((p) => [p.lat, p.lng]),
+          rawCount: trail.rawCount,
+          snapped: false,
+          drivenKm,
+        };
 
     await cacheWrite(cacheKey, result);
     return result;
+  });
+
+// ---------------------------------------------------------------------------
+// How far we have actually come
+// ---------------------------------------------------------------------------
+
+export interface JourneyStats {
+  /** Whole-trip distance actually driven, from the GPS trail. */
+  drivenKm: number;
+  /** Driven since midnight UTC today. */
+  todayKm: number;
+  /**
+   * How much further the roads run than the straight line, measured on this
+   * trip's own trail. Null until there is enough driving to say.
+   */
+  detourFactor: number | null;
+  /** False when nothing has been recorded yet, so the UI can stay quiet. */
+  hasData: boolean;
+  lastTs: string | null;
+}
+
+const STATS_TTL_MS = 60 * 1000;
+
+/**
+ * Distance the family has really covered — aggregates only, never coordinates.
+ *
+ * The app used to answer this from straight lines between hardcoded city
+ * centres, which understated a trip whose whole character is detours to towns
+ * that were never in the plan. This counts the road.
+ */
+export const getJourneyStats = createServerFn({ method: "GET" })
+  // Member-gated like the fuel gauge: it emits no positions, but "how far they
+  // have driven today" is live operational detail about the family.
+  .middleware([requireCapability("location.viewPrecise")])
+  .inputValidator((d: unknown) =>
+    z.object({ tripId: z.string().uuid().optional() }).parse(d ?? {}),
+  )
+  .handler(async ({ data }): Promise<JourneyStats> => {
+    const empty: JourneyStats = {
+      drivenKm: 0,
+      todayKm: 0,
+      detourFactor: null,
+      hasData: false,
+      lastTs: null,
+    };
+    const tripId = await resolveTripId(data.tripId);
+    if (!tripId) return empty;
+
+    const key = `journey-stats:${tripId}`;
+    const cached = await cacheRead<JourneyStats>(key, STATS_TTL_MS);
+    if (cached) return cached;
+
+    const trail = await getTrail(tripId);
+    if (trail.rawCount === 0 || trail.points.length === 0) return empty;
+
+    const midnight = new Date();
+    midnight.setUTCHours(0, 0, 0, 0);
+    const startOfDay = midnight.getTime();
+    const todayPts = trail.points.filter((p) => p.t >= startOfDay);
+    const todayKm =
+      todayPts.length >= 2 ? todayPts[todayPts.length - 1].km - todayPts[0].km : 0;
+
+    const stats: JourneyStats = {
+      drivenKm: Math.round(trail.totalKm * 10) / 10,
+      todayKm: Math.round(todayKm * 10) / 10,
+      detourFactor: learnDetourFactor(trail),
+      hasData: true,
+      lastTs: trail.lastTs,
+    };
+    await cacheWrite(key, stats);
+    return stats;
   });
 
 /**

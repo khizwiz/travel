@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { requireCapability } from "@/integrations/supabase/permission-middleware";
 import { z } from "zod";
-import { haversineKm } from "@/lib/geo";
+import { getTrail, kmAt, type Trail } from "@/lib/location.service";
 import { VEHICLE } from "@/lib/trip-data";
 
 // ── Fuel tracking, derived from the ACTUAL GPS route ──────────────────────────
@@ -12,10 +12,10 @@ import { VEHICLE } from "@/lib/trip-data";
 // the server (so every detour counts, once), stores fills centrally, and learns
 // the vehicle's real l/100km from the litres actually put in over that distance.
 
+// The fix-quality rules (accuracy, jitter, teleport) now live with the trail
+// walker in location.service.ts, so the map and the fuel gauge cannot drift
+// apart about what counts as real driving.
 const DEFAULT_L_PER_100 = 9;      // diesel L200 rough baseline until we measure
-const MAX_ACCURACY_M = 500;       // drop very fuzzy fixes
-const MIN_STEP_KM = 0.02;         // ignore GPS jitter while parked
-const MAX_SPEED_KMH = 160;        // steps implying faster than this = bad fix
 const MIN_SEGMENT_KM = 15;        // a tank must cover this far to trust its l/100
 const STATUS_TTL_MS = 30_000;     // cache the computed status briefly
 const CONSUMPTION_FLOOR = 4;      // clamp learned l/100 to a sane band
@@ -109,79 +109,13 @@ async function writeStatusCache(tripId: string, status: FuelStatus): Promise<voi
   }
 }
 
-interface Timeline {
-  totalKm: number;
-  marks: { ts: number; km: number }[]; // cumulative km at each accepted fix
-  points: number;
-  lastTs: string | null;
-}
-
-// Sum the real driven distance from the ordered GPS trail. Detours are included
-// because every accepted fix adds its leg; jitter, teleports and fuzzy fixes are
-// filtered so a parked phone or a bad cell fix doesn't inflate the odometer.
-async function computeTimeline(tripId: string): Promise<Timeline> {
-  const db = await admin();
-  const pageSize = 1000;
-  const raw: any[] = [];
-  for (let page = 0; page < 60; page++) {
-    const from = page * pageSize;
-    const { data, error } = await db
-      .from("location_points")
-      .select("lat, lng, ts, accuracy_m")
-      .eq("trip_id", tripId)
-      .order("ts", { ascending: true })
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    if (!data || data.length === 0) break;
-    raw.push(...data);
-    if (data.length < pageSize) break;
-  }
-
-  let total = 0;
-  const marks: { ts: number; km: number }[] = [];
-  let anchor: { lat: number; lng: number; t: number } | null = null;
-  let lastTs: string | null = null;
-
-  for (const p of raw) {
-    const acc = p.accuracy_m;
-    if (acc != null && Number(acc) > MAX_ACCURACY_M) continue;
-    const lat = Number(p.lat);
-    const lng = Number(p.lng);
-    const t = new Date(p.ts).getTime();
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(t)) continue;
-    lastTs = p.ts;
-    if (!anchor) {
-      anchor = { lat, lng, t };
-      marks.push({ ts: t, km: 0 });
-      continue;
-    }
-    const step = haversineKm({ lat: anchor.lat, lng: anchor.lng }, { lat, lng });
-    if (step < MIN_STEP_KM) continue; // jitter: keep the anchor, wait for real movement
-    const dtH = (t - anchor.t) / 3_600_000;
-    if (dtH > 0 && step / dtH > MAX_SPEED_KMH) {
-      anchor = { lat, lng, t }; // teleport / bad fix: reset without adding the leg
-      continue;
-    }
-    total += step;
-    marks.push({ ts: t, km: total });
-    anchor = { lat, lng, t };
-  }
-  return { totalKm: total, marks, points: raw.length, lastTs };
-}
-
-function kmAt(marks: { ts: number; km: number }[], tsMs: number): number {
-  let km = 0;
-  for (const m of marks) {
-    if (m.ts <= tsMs) km = m.km;
-    else break;
-  }
-  return km;
-}
-
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 async function buildStatus(tripId: string): Promise<FuelStatus> {
-  const [tl, fills] = await Promise.all([computeTimeline(tripId), fetchLog(tripId)]);
+  const [tl, fills]: [Trail, Fill[]] = await Promise.all([
+    getTrail(tripId),
+    fetchLog(tripId),
+  ]);
   const sorted = fills
     .filter((f) => f && typeof f.ts === "string")
     .sort((a, b) => a.ts.localeCompare(b.ts));
@@ -218,7 +152,7 @@ async function buildStatus(tripId: string): Promise<FuelStatus> {
   const last = perFill.length ? perFill[perFill.length - 1] : null;
 
   return {
-    hasData: tl.points > 0,
+    hasData: tl.rawCount > 0,
     totalKm: r1(tl.totalKm),
     sinceKm: r1(sinceKm),
     tankPct,
@@ -230,7 +164,7 @@ async function buildStatus(tripId: string): Promise<FuelStatus> {
     fills: sorted.length,
     lastFillTs: last?.ts ?? null,
     lastFillLitres: last?.litres ?? null,
-    pointsCounted: tl.points,
+    pointsCounted: tl.rawCount,
     lastTs: tl.lastTs,
     tankLitres: VEHICLE.tankLitres,
     lowPct: VEHICLE.lowFuelWarnPct,

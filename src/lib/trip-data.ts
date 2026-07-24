@@ -1,6 +1,8 @@
 // Seed itinerary, vehicle, and traveller data for Tripping.
 // Sensitive details (exact addresses, booking URLs) are flagged private.
 
+import { CITY_COORDS, haversineKm, pickCoord } from "@/lib/geo";
+
 export type TransportMode = "drive" | "flight" | "ferry" | "mixed";
 export type DayStatus = "upcoming" | "active" | "completed" | "paused" | "missed";
 
@@ -485,13 +487,12 @@ export function getTripProgress(
   // whose destination is nearest (within 150km). Falls back to the calendar
   // date when no city is within range.
   if (liveFix) {
-    // Local import-free port to avoid circular imports.
     let best: { i: number; km: number } | null = null;
     for (let i = 0; i < ITINERARY.length; i++) {
       const label = ITINERARY[i].to || ITINERARY[i].from;
-      const coord = CITY_COORDS_INLINE[label] ?? findLooseCoord(label);
+      const coord = CITY_COORDS[label] ?? pickCoord(label);
       if (!coord) continue;
-      const km = haversineKmInline(liveFix, coord);
+      const km = haversineKm(liveFix, coord);
       if (!best || km < best.km) best = { i, km };
     }
     if (best && best.km <= 150) idx = best.i;
@@ -504,46 +505,6 @@ export function getTripProgress(
     daysUntilStart: 0,
     todayDay: liveFix ? ITINERARY[idx] : ITINERARY[idx].date === isoToday ? ITINERARY[idx] : null,
   };
-}
-
-// Inlined to avoid a src/lib/geo.ts <-> trip-data.ts cycle.
-const CITY_COORDS_INLINE: Record<string, { lat: number; lng: number }> = {
-  Istanbul: { lat: 41.0082, lng: 28.9784 },
-  Edirne: { lat: 41.6771, lng: 26.5557 },
-  Sofia: { lat: 42.6977, lng: 23.3219 },
-  Belgrade: { lat: 44.7866, lng: 20.4489 },
-  Budapest: { lat: 47.4979, lng: 19.0402 },
-  Zagreb: { lat: 45.815, lng: 15.9819 },
-  "Lake Garda": { lat: 45.6, lng: 10.65 },
-  Verona: { lat: 45.4384, lng: 10.9916 },
-  Milan: { lat: 45.4642, lng: 9.19 },
-  Riccione: { lat: 43.9989, lng: 12.6557 },
-  Rome: { lat: 41.9028, lng: 12.4964 },
-  Pescara: { lat: 42.4584, lng: 14.2081 },
-  Bari: { lat: 41.1171, lng: 16.8719 },
-  Igoumenitsa: { lat: 39.5036, lng: 20.265 },
-  Athens: { lat: 37.9838, lng: 23.7275 },
-  Alexandroupoli: { lat: 40.8458, lng: 25.8736 },
-  Thessaloniki: { lat: 40.6401, lng: 22.9444 },
-  Berlin: { lat: 52.52, lng: 13.405 },
-  Patras: { lat: 38.2466, lng: 21.7346 },
-};
-function findLooseCoord(label: string) {
-  if (!label) return null;
-  for (const key of Object.keys(CITY_COORDS_INLINE)) {
-    if (label.toLowerCase().includes(key.toLowerCase())) return CITY_COORDS_INLINE[key];
-  }
-  return null;
-}
-function haversineKmInline(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
-  const R = 6371;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const la1 = (a.lat * Math.PI) / 180;
-  const la2 = (b.lat * Math.PI) / 180;
-  const h =
-    Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
 }
 
 export function formatDuration(min?: number | null): string {

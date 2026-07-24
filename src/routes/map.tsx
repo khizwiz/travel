@@ -130,11 +130,17 @@ function TrackingPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <Navigation className="h-4 w-4 text-primary" />
+            {/* Was "Near <city> · <straight-line> km" — a number measured to a
+                hardcoded city centre across whatever terrain lay between. The
+                km shown now is the road actually driven. */}
             {live
               ? near
-                ? `Near ${near.name} · ${near.distanceKm.toFixed(0)} km`
+                ? `Near ${near.name}`
                 : "Live position"
               : "Location off"}
+            {trailData?.drivenKm ? (
+              <span className="text-foreground">· {Math.round(trailData.drivenKm)} km driven</span>
+            ) : null}
           </div>
           {hydrated && isAdmin && location.status !== "unsupported" && (
             <div className="flex items-center gap-2">
