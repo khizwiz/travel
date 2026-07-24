@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useApp } from "@/lib/app-state";
 import { useAdminAuth } from "@/lib/admin-auth";
-import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
+import { useLocation } from "@/hooks/use-location";
 import { getDefaultTrip, recordLocationPoint, getLatestLocation, getPublicLatestLocation } from "@/lib/tracking.functions";
 
 const PUBLIC_POLL_MS = 5 * 60 * 1000;
@@ -21,7 +21,7 @@ const MAX_RECORD_ACCURACY_M = 150;
 export function useTripTrackingSync() {
   const { isAdmin, role } = useAdminAuth();
   const { liveFix, setLiveFix, geoOptIn, setGeoOptIn } = useApp();
-  const geo = useLiveGeolocation();
+  const geo = useLocation();
   const getTrip = useServerFn(getDefaultTrip);
   const recordFn = useServerFn(recordLocationPoint);
   const latestFn = useServerFn(getLatestLocation);

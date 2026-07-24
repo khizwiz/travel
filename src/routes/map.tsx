@@ -5,12 +5,14 @@ import { RouteMap, type PhotoMarker } from "@/components/RouteMap";
 import { useAdminAuth } from "@/lib/admin-auth";
 import { pickCoord, nearestCity } from "@/lib/geo";
 import { useApp } from "@/lib/app-state";
-import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
+import { useCan } from "@/lib/use-role";
+import { useLocation } from "@/hooks/use-location";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listPublicDestinationPhotos } from "@/lib/photos.functions";
 import { clearRecentLocationPoints, getDefaultTrip } from "@/lib/tracking.functions";
+import { getRouteTrail } from "@/lib/location.functions";
 
 export const Route = createFileRoute("/map")({
   head: () => ({
@@ -30,7 +32,7 @@ export const Route = createFileRoute("/map")({
 function TrackingPage() {
   const { isAdmin } = useAdminAuth();
   const { liveFix } = useApp();
-  const geo = useLiveGeolocation();
+  const location = useLocation();
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
   // GPS-aware progress (nearest destination within 150 km wins over calendar).
@@ -89,6 +91,20 @@ function TrackingPage() {
       label: p.caption ?? p.itinerary_days?.title ?? undefined,
     }));
 
+  // The route actually driven, from the recorded GPS trail and snapped to
+  // roads. This replaces drawing straight lines between itinerary cities —
+  // those ignored every detour and cut across terrain nobody drove over.
+  const fetchTrail = useServerFn(getRouteTrail);
+  const canSeePreciseTrail = useCan("location.viewPrecise");
+  const { data: trailData } = useQuery({
+    queryKey: ["route-trail"],
+    queryFn: () => fetchTrail({ data: {} }),
+    enabled: canSeePreciseTrail,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+  });
+  const trail = trailData?.path;
+
   const points = [
     ...shownWaypoints.map(({ lat, lng, label }) => ({ lat, lng, label })),
     ...(live ? [{ ...live, label: "Current position", accent: true as const }] : []),
@@ -120,18 +136,18 @@ function TrackingPage() {
                 : "Live position"
               : "Location off"}
           </div>
-          {hydrated && isAdmin && geo.supported && (
+          {hydrated && isAdmin && location.status !== "unsupported" && (
             <div className="flex items-center gap-2">
-              {geo.enabled ? (
+              {location.status === "live" || location.status === "locating" ? (
                 <button
-                  onClick={geo.disable}
+                  onClick={location.disable}
                   className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
                 >
                   <LocateOff className="h-3.5 w-3.5" /> Stop tracking
                 </button>
               ) : (
                 <button
-                  onClick={geo.enable}
+                  onClick={location.enable}
                   className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary"
                 >
                   <LocateFixed className="h-3.5 w-3.5" /> Start tracking
@@ -168,6 +184,7 @@ function TrackingPage() {
               coveredIndex={isAdmin ? coveredIndex : shownWaypoints.length}
               focusCovered={progress.phase === "active" && coveredIndex > 0}
               photos={photoMarkers}
+              trail={trail}
             />
           )}
         </div>

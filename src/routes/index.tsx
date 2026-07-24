@@ -13,7 +13,7 @@ import { NearbyAiCard } from "@/components/NearbyAiCard";
 
 import { useApp } from "@/lib/app-state";
 import { useCan } from "@/lib/use-role";
-import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
+import { useLocation } from "@/hooks/use-location";
 import { useEffect, useMemo, useState } from "react";
 
 export const Route = createFileRoute("/")({
@@ -35,7 +35,7 @@ export const Route = createFileRoute("/")({
 function HomePage() {
   const { liveFix } = useApp();
   const canAsk = useCan("ask.use");
-  const geo = useLiveGeolocation();
+  const location = useLocation();
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
@@ -44,10 +44,21 @@ function HomePage() {
   const start = ITINERARY[0]?.date;
   const end = ITINERARY[ITINERARY.length - 1]?.date;
 
-  const nearest = live ? nearestCity(live) : null;
   const todayDay = progress.todayDay ?? (progress.index >= 0 ? ITINERARY[progress.index] : null);
-  const currentCityName = nearest?.name ?? todayDay?.to ?? todayDay?.from ?? ITINERARY[0].from;
-  const currentCoord = (nearest?.coord ?? null) || pickCoord(currentCityName) || CITY_COORDS["Istanbul"];
+
+  // Where we ARE, in this order: the reverse-geocoded device position, then the
+  // nearest known city to that position, and only as a last resort the city
+  // today's plan plans for. The plan is a guess about the future; the device
+  // knows the present. Getting this order wrong is what pinned the app to a
+  // city the family had already left.
+  const nearest = live ? nearestCity(live) : null;
+  const plannedCityName = todayDay?.to ?? todayDay?.from ?? ITINERARY[0].from;
+  const currentCityName = location.placeName ?? nearest?.name ?? plannedCityName;
+  const currentCoord =
+    (live ? { lat: live.lat, lng: live.lng } : null) ??
+    nearest?.coord ??
+    pickCoord(plannedCityName) ??
+    CITY_COORDS["Istanbul"];
 
   const nextDay =
     progress.phase === "before"
@@ -126,9 +137,11 @@ function HomePage() {
                   <span className="blink-dot" /> Current area
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
-                  {live && nearest
-                    ? `${nearest.name} area · ${nearest.distanceKm.toFixed(0)} km`
-                    : `${currentCityName} area`}
+                  {location.placeName
+                    ? `${location.placeName}${location.country ? `, ${location.country}` : ""}`
+                    : live && nearest
+                      ? `near ${nearest.name} · ${nearest.distanceKm.toFixed(0)} km`
+                      : `${currentCityName} area`}
                 </div>
               </div>
               <span className="chip chip-green">Live</span>
@@ -184,17 +197,17 @@ function HomePage() {
               City-level position and completed route only. Full route unlocks with admin.
             </p>
           </div>
-          {hydrated && geo.supported && (
-            geo.enabled ? (
+          {hydrated && location.status !== "unsupported" && (
+            location.status === "live" || location.status === "locating" ? (
               <button
-                onClick={geo.disable}
+                onClick={location.disable}
                 className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
               >
                 <LocateOff className="h-3.5 w-3.5" /> Stop
               </button>
             ) : (
               <button
-                onClick={geo.enable}
+                onClick={location.enable}
                 className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary"
               >
                 <LocateFixed className="h-3.5 w-3.5" /> Use my location
@@ -202,7 +215,7 @@ function HomePage() {
             )
           )}
         </div>
-        {hydrated && geo.denied && (
+        {hydrated && location.status === "denied" && (
           <div className="px-4 pt-2 text-[11px] text-muted-foreground">
             Location blocked. Enable it in your browser settings and try again.
           </div>

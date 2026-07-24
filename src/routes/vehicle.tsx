@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { Car, Fuel as FuelIcon, MapPin } from "lucide-react";
 import { VEHICLE, ITINERARY, getTripProgress } from "@/lib/trip-data";
 import { useApp } from "@/lib/app-state";
-import { useLiveGeolocation } from "@/hooks/use-live-geolocation";
+import { useLocation } from "@/hooks/use-location";
 import { nearestCity, pickCoord, CITY_COORDS } from "@/lib/geo";
 import { RouteMap } from "@/components/RouteMap";
 import { FuelPromptCard } from "@/components/FuelPromptCard";
@@ -26,7 +26,7 @@ export const Route = createFileRoute("/vehicle")({
 
 function VehiclePage() {
   const { liveFix } = useApp();
-  useLiveGeolocation();
+  useLocation();
   const live = liveFix ? { lat: liveFix.lat, lng: liveFix.lng } : null;
   const progress = useMemo(() => getTripProgress(new Date(), live), [live?.lat, live?.lng]);
   const nearest = live ? nearestCity(live) : null;

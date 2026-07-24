@@ -27,6 +27,13 @@ interface RouteMapProps {
   focusCovered?: boolean;
   /** Story photos pinned where they were taken (round thumbnails). */
   photos?: PhotoMarker[];
+  /**
+   * The route actually driven: [lat,lng] pairs from the recorded GPS trail,
+   * map-matched to roads. When present this is drawn INSTEAD of connecting the
+   * waypoint markers, because a line between city coordinates is a claim about
+   * the route that is simply untrue — it cuts across borders, mountains and sea.
+   */
+  trail?: Array<[number, number]>;
 }
 
 // Free, key-less map stack: Leaflet + OpenStreetMap data via CARTO tiles.
@@ -45,6 +52,7 @@ export function RouteMap({
   coveredIndex,
   focusCovered = false,
   photos = [],
+  trail,
 }: RouteMapProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,13 +120,25 @@ export function RouteMap({
           );
         });
 
+        const hasTrail = !!trail && trail.length > 1;
+
+        if (hasTrail) {
+          // The real driven route. Solid, because it is the one line on this
+          // map that is actually evidence rather than intention.
+          L.polyline(trail!, { color: "#22c55e", opacity: 0.95, weight: 4 }).addTo(map!);
+        }
+
         const path = routePoints.map((p) => [p.lat, p.lng] as [number, number]);
         if (path.length > 1) {
-          if (covered > 1) {
+          // Only draw the covered beeline when there is no recorded trail to
+          // draw instead — otherwise the two lines contradict each other.
+          if (covered > 1 && !hasTrail) {
             L.polyline(path.slice(0, covered), {
               color: "#22c55e", opacity: 0.95, weight: 4,
             }).addTo(map!);
           }
+          // The dashed part is the PLAN ahead, which is honestly a straight
+          // line between cities — nothing has been driven yet.
           if (covered < path.length) {
             L.polyline(path.slice(Math.max(0, covered - 1)), {
               color: "#7aa2f7", opacity: 0.6, weight: 3, dashArray: "4 10",
@@ -129,7 +149,10 @@ export function RouteMap({
         const focusPts = focusCovered
           ? [...routePoints.slice(0, Math.max(covered, 1)), ...accentPoints]
           : points;
-        const fitTo = focusPts.length > 0 ? focusPts : points;
+        // Frame the driven trail too — otherwise a detour that left the
+        // straight city-to-city corridor gets drawn outside the viewport.
+        const trailPts = hasTrail ? trail!.map(([lat, lng]) => ({ lat, lng })) : [];
+        const fitTo = [...(focusPts.length > 0 ? focusPts : points), ...trailPts];
         if (fitTo.length === 1) {
           map.setView([fitTo[0].lat, fitTo[0].lng], singleZoom);
         } else {
@@ -147,7 +170,20 @@ export function RouteMap({
       map?.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(points), JSON.stringify(photos), coveredIndex, focusCovered, singleZoom, tileUrl]);
+    // `trail` is keyed by length + last point rather than stringified: it can
+    // hold thousands of pairs and JSON.stringify on every render would cost
+    // more than the redraw it guards.
+  }, [
+    JSON.stringify(points),
+    JSON.stringify(photos),
+    trail?.length,
+    trail?.[trail.length - 1]?.[0],
+    trail?.[trail.length - 1]?.[1],
+    coveredIndex,
+    focusCovered,
+    singleZoom,
+    tileUrl,
+  ]);
 
   if (error) {
     return (
