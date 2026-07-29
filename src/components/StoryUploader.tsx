@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { Camera, Loader2, Upload } from "lucide-react";
+import { Camera, ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { createDestinationPhoto, listOwnerTripDays } from "@/lib/photos.functions";
 import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { prepareImageForUpload } from "@/lib/image-prep";
+import { removeSamplePhotos, seedSamplePhotos } from "@/lib/seed-photos.functions";
 import { formatDate } from "@/lib/trip-data";
 import { useApp } from "@/lib/app-state";
 
@@ -21,6 +22,8 @@ export function StoryUploader() {
   const listDays = useServerFn(listOwnerTripDays);
   const createPhoto = useServerFn(createDestinationPhoto);
   const ensureScaffold = useServerFn(ensureTripScaffold);
+  const addSamples = useServerFn(seedSamplePhotos);
+  const dropSamples = useServerFn(removeSamplePhotos);
   const { liveFix } = useApp();
   const qc = useQueryClient();
 
@@ -31,6 +34,30 @@ export function StoryUploader() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [sampling, setSampling] = useState<"add" | "remove" | null>(null);
+  const [sampleMsg, setSampleMsg] = useState<string | null>(null);
+
+  async function runSamples(which: "add" | "remove") {
+    setSampling(which);
+    setSampleMsg(null);
+    try {
+      const r =
+        which === "add"
+          ? await addSamples({ data: {} })
+          : await dropSamples({ data: {} });
+      setSampleMsg(r.message);
+      qc.invalidateQueries({ queryKey: ["public-story-photos"] });
+    } catch (e: any) {
+      const reason = e?.message ?? "Failed";
+      setSampleMsg(
+        /row-level security|jwt|not authorized|expired/i.test(reason)
+          ? "Your sign-in has expired — sign in again and retry."
+          : reason,
+      );
+    } finally {
+      setSampling(null);
+    }
+  }
 
   useEffect(() => {
     const pickDefault = (rows: any[]) => {
@@ -200,6 +227,42 @@ export function StoryUploader() {
         </button>
         {ok && <span className="text-xs text-primary">{ok}</span>}
         {err && <span className="text-xs text-destructive">{err}</span>}
+      </div>
+
+      {/* Sample photos: a way to confirm the whole path works — bucket, row,
+          companion post, signed URL, feed, map pin — without waiting to be
+          somewhere photogenic. Clearly labelled and removable in one tap. */}
+      <div className="mt-4 border-t border-border/60 pt-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => runSamples("add")}
+            disabled={sampling !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-60"
+          >
+            {sampling === "add" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ImagePlus className="h-3.5 w-3.5" />
+            )}
+            Add sample photos
+          </button>
+          <button
+            onClick={() => runSamples("remove")}
+            disabled={sampling !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-60"
+          >
+            {sampling === "remove" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            Remove samples
+          </button>
+          {sampleMsg && <span className="text-xs text-muted-foreground">{sampleMsg}</span>}
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          Drawn by the app, not photographs — they prove posting works end to end.
+        </p>
       </div>
     </section>
   );
