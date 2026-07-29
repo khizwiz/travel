@@ -62,16 +62,16 @@ export const listPublicDestinationPhotos = createServerFn({ method: "GET" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: trip } = await supabaseAdmin
       .from("trips").select("id").eq("slug", "eu-tripping-2026").maybeSingle();
-    if (!trip) return [];
 
-    const { data: days, error: dErr } = await supabaseAdmin
-      .from("itinerary_days")
-      .select("id, day_date, title")
-      .eq("trip_id", trip.id);
-    if (dErr) throw new Error(dErr.message);
-    const dayById = new Map((days ?? []).map((d) => [d.id as string, d]));
-    if (dayById.size === 0) return [];
-
+    // Photos first, then the days they belong to.
+    //
+    // The first version of this fix went the other way — days for the slug
+    // trip, then photos whose day_id was in that set — and emptied the feed
+    // completely. Deriving the allowed set up front makes every unknown
+    // (a photo on a day from another trip row, a day that no longer exists)
+    // silently delete the photo. Start from the photos that exist and only
+    // drop one when there is positive evidence it belongs elsewhere.
+    //
     // `select("*")` on purpose. lat/lng come from the photo_geo migration and
     // are absent from the checked-in generated types, so naming them here both
     // fails typecheck and 400s outright if that migration has not reached this
@@ -80,30 +80,66 @@ export const listPublicDestinationPhotos = createServerFn({ method: "GET" })
     const { data: rawRows, error } = await supabaseAdmin
       .from("destination_photos")
       .select("*")
-      .in("day_id", Array.from(dayById.keys()))
       .order("created_at", { ascending: false })
       .limit(PHOTO_LIMIT);
     if (error) throw new Error(error.message);
-    const rows = (rawRows ?? []) as Array<Record<string, unknown>>;
+    const allRows = (rawRows ?? []) as Array<Record<string, unknown>>;
+    if (!allRows.length) {
+      // An empty feed has two very different causes and they need different
+      // fixes: nothing was ever uploaded, or the files landed in the bucket
+      // but the companion row never inserted. Say which.
+      const { data: objects } = await supabaseAdmin.storage
+        .from("destination-photos")
+        .list("", { limit: 5 });
+      console.log(
+        `[story] EMPTY rows=0 tripFound=${!!trip} bucketEntries=${objects?.length ?? "err"}`,
+      );
+      return [];
+    }
+
+    const dayIds = Array.from(
+      new Set(
+        allRows.map((r) => r.day_id).filter((v): v is string => typeof v === "string" && !!v),
+      ),
+    );
+    const { data: days, error: dErr } = dayIds.length
+      ? await supabaseAdmin
+          .from("itinerary_days")
+          .select("id, day_date, title, trip_id")
+          .in("id", dayIds)
+      : { data: [] as any[], error: null };
+    if (dErr) throw new Error(dErr.message);
+    const dayById = new Map((days ?? []).map((d: any) => [d.id as string, d]));
+
+    // Exclude a photo only when its day is known AND belongs to another trip.
+    // An unknown day keeps the photo, with no date, rather than vanishing it.
+    const rows = allRows.filter((r) => {
+      const day = dayById.get(r.day_id as string);
+      return !day || !trip || day.trip_id === trip.id;
+    });
     if (!rows.length) return [];
 
     // Only photos whose companion post is still public and active. The insert
     // trigger creates them public, so this hides exactly what the owner hid.
+    // Fail-open for the same reason as above: hide on positive evidence the
+    // post is private or removed, never merely because the lookup came back
+    // empty. A failed join must not silently erase the family's photos.
     const postIds = rows
       .map((r) => r.post_id)
       .filter((v): v is string => typeof v === "string" && !!v);
-    const visible = new Set<string>();
+    const hidden = new Set<string>();
     if (postIds.length) {
-      const { data: posts } = await supabaseAdmin
+      const { data: posts, error: pErr } = await supabaseAdmin
         .from("posts")
         .select("id, visibility, status")
         .in("id", postIds);
+      if (pErr) console.error("[story] post visibility lookup failed", pErr.message);
       for (const p of posts ?? []) {
-        if (p.visibility === "public" && p.status === "active") visible.add(p.id as string);
+        if (p.visibility !== "public" || p.status !== "active") hidden.add(p.id as string);
       }
     }
     const shown = rows.filter(
-      (r) => !r.post_id || (typeof r.post_id === "string" && visible.has(r.post_id)),
+      (r) => !(typeof r.post_id === "string" && hidden.has(r.post_id)),
     );
     if (!shown.length) return [];
 
@@ -121,6 +157,14 @@ export const listPublicDestinationPhotos = createServerFn({ method: "GET" })
 
     const coarse = (v: unknown): number | null =>
       v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100;
+
+    // Counts per stage, so an empty feed says which step emptied it instead of
+    // being indistinguishable from "no photos have been posted".
+    const signed = shown.filter((r) => urlFor.get(r.storage_path as string)).length;
+    console.log(
+      `[story] photos=${allRows.length} afterTripFilter=${rows.length} ` +
+        `afterVisibility=${shown.length} signed=${signed} days=${dayById.size}`,
+    );
 
     return shown.map((r) => {
       const day = dayById.get(r.day_id as string);

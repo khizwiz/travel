@@ -466,6 +466,8 @@ export type Database = {
           day_id: string
           id: string
           is_cover: boolean
+          lat: number | null
+          lng: number | null
           post_id: string | null
           storage_path: string
           uploaded_by: string | null
@@ -476,6 +478,8 @@ export type Database = {
           day_id: string
           id?: string
           is_cover?: boolean
+          lat?: number | null
+          lng?: number | null
           post_id?: string | null
           storage_path: string
           uploaded_by?: string | null
@@ -486,6 +490,8 @@ export type Database = {
           day_id?: string
           id?: string
           is_cover?: boolean
+          lat?: number | null
+          lng?: number | null
           post_id?: string | null
           storage_path?: string
           uploaded_by?: string | null

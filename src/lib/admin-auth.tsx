@@ -40,10 +40,21 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    verifyTok({ data: { token } })
-      .then((r) => {
+    // Both halves must be live, not just the admin token.
+    //
+    // signIn() establishes two things: this admin token, and a real Supabase
+    // session. Restoring used to check only the token — but the two expire on
+    // different clocks, and everything that actually writes (photo uploads,
+    // storage, any RLS-protected insert) authenticates with the Supabase
+    // session, not the token. So a phone whose Supabase refresh token had
+    // lapsed still showed the uploader, still let you pick a photo, and then
+    // failed inside storage with a row-level-security error that named
+    // nothing the user could act on. Treat a missing session as not signed in
+    // so the app asks for the password instead.
+    Promise.all([verifyTok({ data: { token } }), supabase.auth.getSession()])
+      .then(([r, { data: session }]) => {
         if (!alive) return;
-        if (r.valid) setRole(r.role ?? "owner");
+        if (r.valid && session.session) setRole(r.role ?? "owner");
         else window.localStorage.removeItem(STORAGE_KEY);
       })
       .catch(() => {

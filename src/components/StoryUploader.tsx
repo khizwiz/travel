@@ -5,6 +5,7 @@ import { Camera, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { createDestinationPhoto, listOwnerTripDays } from "@/lib/photos.functions";
 import { ensureTripScaffold } from "@/lib/scaffold.functions";
+import { prepareImageForUpload } from "@/lib/image-prep";
 import { formatDate } from "@/lib/trip-data";
 import { useApp } from "@/lib/app-state";
 
@@ -65,13 +66,26 @@ export function StoryUploader() {
     setErr(null);
     setOk(null);
     let posted = 0;
+    const remaining = [...files];
+    let heicWarning = false;
     try {
-      for (const file of files) {
-        const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+      while (remaining.length) {
+        const original = remaining[0];
+        // iPhone HEIC becomes JPEG here, and huge photos are scaled down, so
+        // the post is visible to everyone and the upload survives a roadside
+        // connection. See image-prep.ts for why this is not optional.
+        const prepared = await prepareImageForUpload(original);
+        if (prepared.undecodableHeic) heicWarning = true;
+
+        const ext = prepared.file.name.split(".").pop()?.toLowerCase() || "jpg";
         const path = `${dayId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: upErr } = await supabase.storage
           .from("destination-photos")
-          .upload(path, file, { cacheControl: "3600", upsert: false });
+          .upload(path, prepared.file, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: prepared.file.type || undefined,
+          });
         if (upErr) throw upErr;
         await createPhoto({
           data: {
@@ -86,16 +100,32 @@ export function StoryUploader() {
           },
         });
         posted += 1;
+        // Drop it only once it is safely posted, so a failure part-way through
+        // leaves exactly the un-posted photos selected and retrying cannot
+        // upload the same photo twice.
+        remaining.shift();
       }
       setFiles([]);
       setCaption("");
-      setOk(posted === 1 ? "Posted to Story." : `Posted ${posted} photos to Story.`);
+      setOk(
+        (posted === 1 ? "Posted to Story." : `Posted ${posted} photos to Story.`) +
+          (heicWarning
+            ? " One was an iPhone photo this browser cannot convert — it may not display for everyone."
+            : ""),
+      );
       qc.invalidateQueries({ queryKey: ["public-story-photos"] });
     } catch (e: any) {
+      // Keep the un-posted photos selected so the button retries just those.
+      setFiles(remaining);
+      if (posted > 0) {
+        setCaption("");
+        qc.invalidateQueries({ queryKey: ["public-story-photos"] });
+      }
+      const reason = e?.message ?? "Upload failed";
+      const rls = /row-level security|violates|jwt|not authorized/i.test(reason);
       setErr(
-        posted > 0
-          ? `Posted ${posted}, then failed: ${e?.message ?? "Upload failed"}`
-          : e?.message ?? "Upload failed",
+        (posted > 0 ? `Posted ${posted}, then failed: ` : "") +
+          (rls ? "your sign-in has expired — sign in again and retry" : reason),
       );
     } finally {
       setBusy(false);
