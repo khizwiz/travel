@@ -1,4 +1,4 @@
-import { pickCoord } from "@/lib/geo";
+import { haversineKm, pickCoord } from "@/lib/geo";
 
 /**
  * Where a given itinerary day was, in coordinates.
@@ -60,6 +60,40 @@ export async function coordsForDays(db: any, dayIds: string[]): Promise<Map<stri
 /** Coordinates for a single day, or null if the day's location is unknown. */
 export async function coordForDay(db: any, dayId: string): Promise<Coord | null> {
   return (await coordsForDays(db, [dayId])).get(dayId) ?? null;
+}
+
+/**
+ * How far a photo may sit from its day's known location and still be believed.
+ *
+ * A day covers a drive, so the two ends can be hundreds of kilometres apart;
+ * this has to be loose enough not to reject a genuine roadside photo, and
+ * tight enough to catch a picture that plainly was not taken on that leg.
+ */
+const PLAUSIBLE_KM = 250;
+
+export type CoordSource = "photo" | "day" | "photo-far" | "none";
+
+/**
+ * Decide where a photo belongs, cross-checking its own metadata against the
+ * day it was filed under.
+ *
+ * Metadata wins when the two agree, because the camera knows best. When they
+ * disagree wildly the day wins — a photo taken at home while sorting through
+ * the trip carries perfectly valid coordinates for the wrong country, and
+ * pinning it there scatters the map with places the trip never went. The day
+ * is the thing the owner deliberately chose.
+ */
+export function reconcileCoord(
+  exif: Coord | null,
+  day: Coord | null,
+): { coord: Coord | null; source: CoordSource } {
+  if (!exif && !day) return { coord: null, source: "none" };
+  if (!exif) return { coord: day, source: "day" };
+  if (!day) return { coord: exif, source: "photo" };
+  const apart = haversineKm(exif, day);
+  return apart <= PLAUSIBLE_KM
+    ? { coord: exif, source: "photo" }
+    : { coord: day, source: "photo-far" };
 }
 
 /** The day's calendar date, or null. */

@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { coordForDay, coordsForDays, dayDate } from "@/lib/day-coord";
+import { coordForDay, coordsForDays, dayDate, reconcileCoord } from "@/lib/day-coord";
 import { revgeoKey } from "@/lib/location.functions";
 
 // List all itinerary days for the default trip so admins can pick one when
@@ -270,9 +270,16 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
         : null;
     const deviceFix =
       data.lat != null && data.lng != null ? { lat: data.lat, lng: data.lng } : null;
-    const coord =
-      exifFix ??
-      (forDate === today && deviceFix ? deviceFix : await coordForDay(supabaseAdmin, data.dayId));
+    const dayFix = await coordForDay(supabaseAdmin, data.dayId);
+    // Cross-check the photo's own coordinates against its day: metadata wins
+    // when they agree, the day wins when they are continents apart. A photo
+    // sorted at home is genuinely at home, and pinning it there scatters the
+    // map with places the trip never went.
+    const coord = exifFix
+      ? reconcileCoord(exifFix, dayFix).coord
+      : forDate === today && deviceFix
+        ? deviceFix
+        : dayFix;
 
     // Retry without geo if the lat/lng migration hasn't reached this database,
     // so uploads never break on schema drift.

@@ -56,7 +56,9 @@ export function StoryUploader() {
     let fromDay = 0;
     let scanned = 0;
     for (let pass = 0; pass < 40; pass++) {
-      const r = await backfill({ data: {} });
+      // The cursor is the caller's job: a full re-read leaves no "done" mark
+      // on a row, so without it every pass would re-open the same photos.
+      const r = await backfill({ data: { offset: scanned } });
       scanned += r.scanned;
       located += r.located;
       fromDay += r.fellBackToDay;

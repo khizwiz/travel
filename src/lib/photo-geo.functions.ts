@@ -3,7 +3,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { readExifGps } from "@/lib/exif-gps";
 import { reverseGeocodeCore } from "@/lib/location.functions";
-import { coordsForDays } from "@/lib/day-coord";
+import { coordsForDays, reconcileCoord } from "@/lib/day-coord";
 
 /**
  * Put the photos already in the bucket onto the map, where they were taken.
@@ -69,8 +69,14 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     z
       .object({
         batch: z.number().int().min(1).max(25).optional(),
-        /** Re-read photos that already have a position, not just the blanks. */
-        force: z.boolean().optional(),
+        /**
+         * How many already-processed photos to skip. Needed because a full
+         * re-read leaves no "done" marker on a row, so without a cursor the
+         * caller would loop over the same first batch forever.
+         */
+        offset: z.number().int().min(0).optional(),
+        /** Skip photos that already carry any position. Off by default. */
+        onlyMissing: z.boolean().optional(),
       })
       .parse(d ?? {}),
   )
@@ -100,16 +106,21 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     const photos = (rawPhotos ?? []) as Array<Record<string, unknown>>;
 
-    // A photo counts as done once it carries a position, unless forcing.
-    // Worth forcing after the first pass: anything placed from its day rather
-    // than its metadata still has a coordinate, so it would otherwise never be
-    // revisited even though its EXIF may be sitting there unread.
-    const pending = photos.filter((p) => (data.force ? true : p.lat == null || p.lng == null));
-    const batch = pending.slice(0, data.batch ?? DEFAULT_BATCH);
+    // Default to re-reading everything, not only the blanks.
+    //
+    // "Has a coordinate" is not the same as "has the right coordinate": every
+    // photo uploaded before this existed carries the position of the phone
+    // that posted it, which is a value, so a blanks-only pass skipped exactly
+    // the photos that needed fixing and reported there was nothing to do.
+    const pending = photos.filter((p) => (data.onlyMissing ? p.lat == null || p.lng == null : true));
+    const offset = data.offset ?? 0;
+    const batch = pending.slice(offset, offset + (data.batch ?? DEFAULT_BATCH));
     if (!batch.length) {
       return {
         scanned: 0, located: 0, named: 0, fellBackToDay: 0, remaining: 0,
-        message: "Every photo already has a location.",
+        message: pending.length
+          ? "Finished — every photo has been checked."
+          : "No photos to read.",
       };
     }
 
@@ -124,19 +135,15 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
 
     for (const p of batch) {
       const path = p.storage_path as string;
-      let coord: { lat: number; lng: number } | null = null;
-
       const head = await readHead(db, path);
-      if (head) coord = await readExifGps(head);
+      const exif = head ? await readExifGps(head) : null;
 
-      // No metadata in the file — the day it belongs to is the next best
-      // answer, and better than leaving the photo off the map entirely.
-      if (!coord) {
-        coord = dayCoords.get(p.day_id as string) ?? null;
-        if (coord) fellBackToDay++;
-      } else {
-        located++;
-      }
+      // Cross-check the photo's own coordinates against the day it was filed
+      // under, so a picture sorted at home does not drop a pin on a country
+      // the trip never visited.
+      const { coord, source } = reconcileCoord(exif, dayCoords.get(p.day_id as string) ?? null);
+      if (source === "photo") located++;
+      else if (source === "day" || source === "photo-far") fellBackToDay++;
 
       if (!coord) continue;
 
@@ -159,7 +166,7 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
       if (place?.label) named++;
     }
 
-    const remaining = Math.max(0, pending.length - batch.length);
+    const remaining = Math.max(0, pending.length - (offset + batch.length));
     return {
       scanned: batch.length,
       located,
@@ -170,6 +177,6 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
         `Read ${batch.length} photo${batch.length === 1 ? "" : "s"}: ` +
         `${located} placed from the camera's own data` +
         (fellBackToDay ? `, ${fellBackToDay} from their day` : "") +
-        (remaining ? `. ${remaining} still to go — run it again.` : "."),
+        (remaining ? `. ${remaining} still to go.` : "."),
     };
   });
