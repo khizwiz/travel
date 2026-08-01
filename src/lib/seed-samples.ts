@@ -1,5 +1,5 @@
 import { buildSamplePng } from "@/lib/sample-image";
-import { CITY_COORDS, pickCoord } from "@/lib/geo";
+import { pickCoord } from "@/lib/geo";
 
 /**
  * Seeding and un-seeding the sample story photos.
@@ -141,6 +141,20 @@ export async function seedSamples(
       .map((r: any) => r.day_id as string),
   );
 
+  // Real coordinates per day, from the stay booked for it.
+  const { data: stays } = await db
+    .from("accommodations")
+    .select("day_id, lat, lng")
+    .in("day_id", chosen.map((d: any) => d.id));
+  const coordFor = new Map<string, { lat: number; lng: number }>();
+  for (const s of stays ?? []) {
+    const lat = Number((s as any).lat);
+    const lng = Number((s as any).lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      coordFor.set((s as any).day_id as string, { lat, lng });
+    }
+  }
+
   let created = 0;
   let skipped = 0;
   const touched: string[] = [];
@@ -159,9 +173,16 @@ export async function seedSamples(
       .upload(path, png, { contentType: "image/png", upsert: true, cacheControl: "3600" });
     if (upErr) throw new Error(`Upload failed for ${path}: ${upErr.message}`);
 
-    // Pin it near the day's destination so the map markers are exercised too.
+    // Pin it where the day actually was, or nowhere.
+    //
+    // The day's own accommodation carries real coordinates; the title is a
+    // free-text label like "Re-routed: Rimini, Italy" and the hardcoded city
+    // table only knows nineteen names, so matching on it silently misses most
+    // real stops. It used to fall back to Istanbul, which does not just lose a
+    // pin — it puts the photo in the wrong country. No coordinates now means
+    // no marker, which is honest.
     const label: string = day.title ?? "";
-    const coord = pickCoord(label) ?? CITY_COORDS["Istanbul"];
+    const coord = coordFor.get(day.id as string) ?? pickCoord(label);
     const jitter = (n: number) => n + ((i % 3) - 1) * 0.02;
 
     const base: Record<string, unknown> = {
@@ -171,7 +192,9 @@ export async function seedSamples(
       is_cover: false,
     };
     if (actorId) base.uploaded_by = actorId;
-    const withGeo = { ...base, lat: jitter(coord.lat), lng: jitter(coord.lng) };
+    const withGeo = coord
+      ? { ...base, lat: jitter(coord.lat), lng: jitter(coord.lng) }
+      : base;
 
     // Same schema-drift guard the real uploader uses: lat/lng arrived in a
     // later migration that may not have reached every database.
