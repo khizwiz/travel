@@ -102,21 +102,68 @@ export function RouteMap({
           }).addTo(map!);
         });
 
-        // Story photo thumbnails pinned where they were taken.
-        photos.forEach((ph) => {
-          const marker = L.marker([ph.lat, ph.lng], {
-            title: ph.label ?? "Photo",
+        // Story photos, one pin per place rather than one per photo.
+        //
+        // Several photos routinely share a position: they were taken on the
+        // same street, and public coordinates are rounded to about a kilometre
+        // for privacy anyway. Dropping a marker per photo stacks them all on
+        // the same pixel, so a whole day in a city renders as a single
+        // thumbnail and every other photo is invisible underneath it. Group
+        // them, show how many there are, and open the set on click — that is
+        // honest about position and still tells you the photos exist.
+        const esc = (s: string) => s.replace(/[<>&"]/g, (c) =>
+          ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c] as string);
+
+        const byPlace = new Map<string, PhotoMarker[]>();
+        for (const ph of photos) {
+          const key = `${ph.lat.toFixed(4)},${ph.lng.toFixed(4)}`;
+          const list = byPlace.get(key);
+          if (list) list.push(ph);
+          else byPlace.set(key, [ph]);
+        }
+
+        byPlace.forEach((group) => {
+          const head = group[0];
+          const count = group.length;
+          const badge =
+            count > 1
+              ? `<div style="position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#111;color:#fff;font:600 11px/18px system-ui,sans-serif;text-align:center;border:2px solid #fff;">${count}</div>`
+              : "";
+          const marker = L.marker([head.lat, head.lng], {
+            title: count > 1 ? `${count} photos` : (head.label ?? "Photo"),
+            // Keep the fullest pin on top when places nearly overlap.
+            zIndexOffset: count,
             icon: L.divIcon({
               className: "",
               iconSize: [40, 40],
               iconAnchor: [20, 20],
-              html: `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);"><img src="${ph.thumbUrl}" style="width:100%;height:100%;object-fit:cover;" alt=""/></div>`,
+              html:
+                `<div style="position:relative;width:40px;height:40px;">` +
+                `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);">` +
+                `<img src="${head.thumbUrl}" style="width:100%;height:100%;object-fit:cover;" alt=""/></div>${badge}</div>`,
             }),
           }).addTo(map!);
+
+          const heading = head.label
+            ? `<div style="margin-bottom:6px;font:600 12px system-ui,sans-serif">${esc(head.label)}</div>`
+            : "";
+          const grid =
+            count === 1
+              ? `<img src="${head.thumbUrl}" style="width:100%;border-radius:8px" alt=""/>`
+              : `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:240px;overflow:auto">` +
+                group
+                  .map(
+                    (p) =>
+                      `<img src="${p.thumbUrl}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px" alt=""/>`,
+                  )
+                  .join("") +
+                `</div>`;
           marker.bindPopup(
-            `<div style="max-width:220px"><img src="${ph.thumbUrl}" style="width:100%;border-radius:8px" alt=""/>${
-              ph.label ? `<div style="margin-top:6px;font-size:12px">${ph.label.replace(/</g, "&lt;")}</div>` : ""
-            }</div>`,
+            `<div style="max-width:240px">${heading}${grid}` +
+              (count > 1
+                ? `<div style="margin-top:6px;font-size:11px;opacity:.7">${count} photos here</div>`
+                : "") +
+              `</div>`,
           );
         });
 
