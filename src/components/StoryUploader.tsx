@@ -7,7 +7,7 @@ import { createDestinationPhoto, listOwnerTripDays } from "@/lib/photos.function
 import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { prepareImageForUpload } from "@/lib/image-prep";
 import { removeSamplePhotos, seedSamplePhotos } from "@/lib/seed-photos.functions";
-import { formatDate } from "@/lib/trip-data";
+import { formatDate, ITINERARY } from "@/lib/trip-data";
 import { useApp } from "@/lib/app-state";
 
 type Day = { id: string; day_date: string; title: string | null };
@@ -36,6 +36,7 @@ export function StoryUploader() {
   const [ok, setOk] = useState<string | null>(null);
   const [sampling, setSampling] = useState<"add" | "remove" | null>(null);
   const [sampleMsg, setSampleMsg] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   async function runSamples(which: "add" | "remove") {
     setSampling(which);
@@ -73,13 +74,25 @@ export function StoryUploader() {
     };
     listDays()
       .then(async (rows: any[]) => {
-        if (rows.length === 0) {
-          // Fresh database: create the trip, days, and photo bucket, then retry.
+        // Fill in whatever the database is missing, not just a database that is
+        // entirely empty.
+        //
+        // This used to run only when there were zero days. A single booking
+        // import creates a day, so the count was never zero again and the other
+        // forty were never written — leaving three dates in this picker, no
+        // story history, and nothing for photos to attach to. The scaffold only
+        // ever inserts dates it does not already have, so running it whenever
+        // the plan is short of days is safe and idempotent.
+        if (rows.length < ITINERARY.length) {
           try {
             await ensureScaffold();
-            pickDefault(await listDays());
+            const filled = await listDays();
+            if (filled.length > rows.length) {
+              setNote(`Added ${filled.length - rows.length} missing days from the plan.`);
+            }
+            pickDefault(filled);
             return;
-          } catch { /* not the owner or scaffold failed — leave empty */ }
+          } catch { /* not the owner or scaffold failed — use what we have */ }
         }
         pickDefault(rows);
       })
@@ -168,6 +181,7 @@ export function StoryUploader() {
       <p className="mt-1 text-xs text-muted-foreground">
         Uploads to today's day by default. Anyone visiting the site will see it in the public feed.
       </p>
+      {note && <p className="mt-1 text-xs text-primary">{note}</p>}
 
       <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
         <label className="block">

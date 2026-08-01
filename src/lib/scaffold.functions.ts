@@ -20,12 +20,22 @@ export const ensureTripScaffold = createServerFn({ method: "POST" })
       .eq("user_id", userId).eq("role", "owner").maybeSingle();
     if (!roleRow) throw new Error("Owner only");
 
-    const summary = { tripCreated: false, daysInserted: 0, bucketsCreated: [] as string[] };
+    const summary = {
+      tripCreated: false,
+      daysInserted: 0,
+      datesCorrected: false,
+      bucketsCreated: [] as string[],
+    };
+    const planStart = ITINERARY[0]?.date ?? "2026-07-16";
+    const planEnd = ITINERARY[ITINERARY.length - 1]?.date ?? "2026-08-25";
 
     // 1. Default trip row. public_slug matters: every anon RLS policy
     // (public feed, comments, photos) requires it to be NOT NULL.
     let { data: trip } = await supabaseAdmin
-      .from("trips").select("id, public_slug").eq("slug", "eu-tripping-2026").maybeSingle();
+      .from("trips")
+      .select("id, public_slug, starts_on, ends_on")
+      .eq("slug", "eu-tripping-2026")
+      .maybeSingle();
     if (!trip) {
       const { data: created, error } = await supabaseAdmin
         .from("trips")
@@ -34,17 +44,32 @@ export const ensureTripScaffold = createServerFn({ method: "POST" })
           slug: "eu-tripping-2026",
           public_slug: "eu-tripping",
           owner_id: userId,
-          starts_on: ITINERARY[0]?.date ?? "2026-07-18",
-          ends_on: ITINERARY[ITINERARY.length - 1]?.date ?? "2026-08-27",
+          starts_on: planStart,
+          ends_on: planEnd,
           public_tracking_enabled: true,
         })
-        .select("id, public_slug")
+        .select("id, public_slug, starts_on, ends_on")
         .single();
       if (error) throw new Error(error.message);
       trip = created;
       summary.tripCreated = true;
-    } else if (!trip.public_slug) {
-      await supabaseAdmin.from("trips").update({ public_slug: "eu-tripping" }).eq("id", trip.id);
+    } else {
+      // Keep the stored window in step with the plan. It was written once at
+      // creation and never revisited, so when the itinerary moved to its real
+      // start of 16 July the trip row kept the old dates — and that row is what
+      // the booking importer measures a document's date against.
+      const patch: {
+        public_slug?: string;
+        starts_on?: string;
+        ends_on?: string;
+      } = {};
+      if (!trip.public_slug) patch.public_slug = "eu-tripping";
+      if (trip.starts_on !== planStart) patch.starts_on = planStart;
+      if (trip.ends_on !== planEnd) patch.ends_on = planEnd;
+      if (Object.keys(patch).length) {
+        await supabaseAdmin.from("trips").update(patch).eq("id", trip.id);
+        summary.datesCorrected = patch.starts_on != null || patch.ends_on != null;
+      }
     }
 
     // 2. Itinerary days — insert only missing dates, from the static plan.
