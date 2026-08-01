@@ -5,6 +5,7 @@ import { readExifMeta } from "@/lib/exif-gps";
 import { reverseGeocodeCore } from "@/lib/location.functions";
 import { coordsForDays, reconcileCoord } from "@/lib/day-coord";
 import { assertTripOwner } from "@/lib/trip-owner.server";
+import { aiModel, aiUrl, lovableAiHeaders } from "@/lib/ai-gateway.server";
 
 /**
  * Put the photos already in the bucket onto the map, where they were taken.
@@ -39,6 +40,8 @@ export interface BackfillResult {
   fellBackToDay: number;
   /** Photos moved onto the day their capture date says they belong to. */
   refiled?: number;
+  /** Photos with no GPS whose place the model recognised from the picture. */
+  identified?: number;
   remaining: number;
   message: string;
 }
@@ -46,6 +49,72 @@ export interface BackfillResult {
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   return supabaseAdmin;
+}
+
+/**
+ * Ask the model to recognise which of the trip's stops a photo was taken in.
+ *
+ * Only for photos carrying no GPS at all — location switched off, or stripped
+ * by whatever exported them. The answer is constrained to places the trip
+ * actually visited and the model is told it may decline, because a confident
+ * guess at a city nobody went to is worse than no pin. It sees the photo by
+ * signed URL, so nothing has to be downloaded into the Worker to ask.
+ */
+async function identifyPlaceBySight(
+  imageUrl: string,
+  candidates: string[],
+  dayHint: string | null,
+): Promise<string | null> {
+  const key =
+    process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY || process.env.LOVABLE_API_KEY;
+  if (!key || candidates.length === 0) return null;
+  try {
+    const res = await fetch(aiUrl(), {
+      method: "POST",
+      headers: lovableAiHeaders(),
+      body: JSON.stringify({
+        model: aiModel(),
+        messages: [
+          {
+            role: "system",
+            content:
+              "You identify where a travel photograph was taken. You are given the " +
+              "only places it could be. Reply with exactly one of them, or the single " +
+              "word UNKNOWN. Answer UNKNOWN unless the picture shows something you " +
+              "actually recognise — architecture, signage, landscape, a landmark. " +
+              "Never guess from atmosphere alone.",
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `Places: ${candidates.join(" | ")}.` +
+                  (dayHint ? ` The photo is filed under ${dayHint}, which may be wrong.` : "") +
+                  " Which is it? Reply with one name from the list, or UNKNOWN.",
+              },
+              { type: "image_url", image_url: { url: imageUrl } },
+            ],
+          },
+        ],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    const answer = String(json?.choices?.[0]?.message?.content ?? "").trim();
+    if (!answer || /unknown/i.test(answer)) return null;
+    // Only accept an answer that is actually one of the offered places.
+    const match = candidates.find(
+      (c) => c.toLowerCase() === answer.toLowerCase() ||
+        answer.toLowerCase().includes(c.toLowerCase()),
+    );
+    return match ?? null;
+  } catch (e) {
+    console.error("[photo-geo] visual identification failed", e);
+    return null;
+  }
 }
 
 /** Fetch just the head of a stored object via a short-lived signed URL. */
@@ -72,14 +141,8 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     z
       .object({
         batch: z.number().int().min(1).max(25).optional(),
-        /**
-         * How many already-processed photos to skip. Needed because a full
-         * re-read leaves no "done" marker on a row, so without a cursor the
-         * caller would loop over the same first batch forever.
-         */
-        offset: z.number().int().min(0).optional(),
-        /** Skip photos that already carry any position. Off by default. */
-        onlyMissing: z.boolean().optional(),
+        /** Ignore recorded progress and read every photo again. */
+        force: z.boolean().optional(),
       })
       .parse(d ?? {}),
   )
@@ -110,20 +173,30 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     const photos = (rawPhotos ?? []) as Array<Record<string, unknown>>;
 
-    // Default to re-reading everything, not only the blanks.
+    // Which photos have already been through this.
     //
-    // "Has a coordinate" is not the same as "has the right coordinate": every
-    // photo uploaded before this existed carries the position of the phone
-    // that posted it, which is a value, so a blanks-only pass skipped exactly
-    // the photos that needed fixing and reported there was nothing to do.
-    const pending = photos.filter((p) => (data.onlyMissing ? p.lat == null || p.lng == null : true));
-    const offset = data.offset ?? 0;
-    const batch = pending.slice(offset, offset + (data.batch ?? DEFAULT_BATCH));
+    // Not "does it have a coordinate" — every photo uploaded before this
+    // existed carries the position of the phone that posted it, which is a
+    // value, so that test skipped exactly the ones needing repair. Progress is
+    // kept in app_config instead: no schema change, and it makes the pass
+    // resumable and safe to trigger automatically without re-downloading the
+    // whole feed each time.
+    const progressKey = `photo-geo:${trip.id}`;
+    const { data: progressRow } = await db
+      .from("app_config").select("value").eq("key", progressKey).maybeSingle();
+    const done: Set<string> = new Set(
+      data.force ? [] : (((progressRow as any)?.value?.done as string[]) ?? []),
+    );
+
+    const pending = photos.filter((p) => !done.has(p.id as string));
+    // Progress is recorded, so each call simply takes the next unread batch —
+    // no cursor for the caller to keep, and nothing re-read on a retry.
+    const batch = pending.slice(0, data.batch ?? DEFAULT_BATCH);
     if (!batch.length) {
       return {
         scanned: 0, located: 0, named: 0, fellBackToDay: 0, remaining: 0,
-        message: pending.length
-          ? "Finished — every photo has been checked."
+        message: photos.length
+          ? "Every photo has been read."
           : "No photos to read.",
       };
     }
@@ -133,10 +206,21 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     const allDayCoords = await coordsForDays(db, dayIds);
     const tripPoints = Array.from(allDayCoords.values());
 
+    // The named stops the trip made, for recognising a photo by sight.
+    const titleByDayId = new Map(
+      (days ?? []).map((d: any) => [d.id as string, (d.title as string) ?? ""]),
+    );
+    const placeCoords = new Map<string, { lat: number; lng: number }>();
+    for (const [id, coord] of allDayCoords) {
+      const title = String(titleByDayId.get(id) ?? "").trim();
+      if (title && !placeCoords.has(title)) placeCoords.set(title, coord);
+    }
+
     let located = 0;
     let named = 0;
     let fellBackToDay = 0;
     let refiled = 0;
+    let identified = 0;
 
     for (const p of batch) {
       const path = p.storage_path as string;
@@ -161,10 +245,30 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
         }
       }
 
+      // No coordinates in the file: ask the model to recognise the place from
+      // the picture itself, against the list of stops the trip actually made.
+      let recognised: { lat: number; lng: number } | null = null;
+      if (!meta.gps) {
+        const { data: signed } = await db.storage.from(BUCKET).createSignedUrl(path, 300);
+        if (signed?.signedUrl) {
+          const name = await identifyPlaceBySight(
+            signed.signedUrl,
+            Array.from(placeCoords.keys()),
+            titleByDayId.get(dayId) ?? null,
+          );
+          if (name) {
+            recognised = placeCoords.get(name) ?? null;
+            if (recognised) identified++;
+          }
+        }
+      }
+
       const { coord, source } = reconcileCoord(
-        meta.gps,
+        meta.gps ?? recognised,
         allDayCoords.get(dayId) ?? null,
-        tripPoints,
+        // A recognised place is one of the trip's own stops, so it needs no
+        // checking against the corridor — and checking it would be circular.
+        meta.gps ? tripPoints : [],
       );
       if (source === "photo") located++;
       else if (source === "day" || source === "photo-off-trip") fellBackToDay++;
@@ -190,7 +294,20 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
       if (place?.label) named++;
     }
 
-    const remaining = Math.max(0, pending.length - (offset + batch.length));
+    // Record the batch as read, whatever the outcome — a photo with no usable
+    // metadata is still a photo we have looked at, and retrying it forever
+    // would stall the pass on the first unreadable file.
+    for (const p of batch) done.add(p.id as string);
+    await db.from("app_config").upsert(
+      {
+        key: progressKey,
+        value: { done: Array.from(done) } as never,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "key" },
+    );
+
+    const remaining = Math.max(0, pending.length - batch.length);
     return {
       scanned: batch.length,
       located,
@@ -198,9 +315,11 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
       fellBackToDay,
       remaining,
       refiled,
+      identified,
       message:
         `Read ${batch.length} photo${batch.length === 1 ? "" : "s"}: ` +
         `${located} placed from the camera's own data` +
+        (identified ? `, ${identified} recognised from the picture` : "") +
         (fellBackToDay ? `, ${fellBackToDay} from their day` : "") +
         (refiled ? `, ${refiled} moved to the day they were taken` : "") +
         (remaining ? `. ${remaining} still to go.` : "."),

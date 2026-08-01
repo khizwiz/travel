@@ -51,26 +51,30 @@ export function StoryUploader() {
    * and says what is left. Keep going until it is done, showing progress —
    * otherwise a large feed would need the button pressed a dozen times.
    */
-  async function runGeoBackfill() {
+  async function runGeoBackfill(quiet = false) {
     let located = 0;
     let fromDay = 0;
     let scanned = 0;
     for (let pass = 0; pass < 40; pass++) {
-      // The cursor is the caller's job: a full re-read leaves no "done" mark
-      // on a row, so without it every pass would re-open the same photos.
-      const r = await backfill({ data: { offset: scanned } });
+      // Progress is recorded server-side, so each call takes the next unread
+      // batch and a retry never re-reads what is already done.
+      const r = await backfill({ data: {} });
       scanned += r.scanned;
       located += r.located;
       fromDay += r.fellBackToDay;
-      setSampleMsg(
-        r.remaining
-          ? `Read ${scanned} photo${scanned === 1 ? "" : "s"}… ${r.remaining} to go.`
-          : `Done: ${located} placed from the photo's own data` +
-            (fromDay ? `, ${fromDay} from their day` : "") +
-            (scanned === 0 ? " — nothing needed reading." : "."),
-      );
+      // A quiet run happens on page load; only speak up if it found work.
+      if (!quiet || scanned > 0) {
+        setSampleMsg(
+          r.remaining
+            ? `Reading photo locations… ${scanned} done, ${r.remaining} to go.`
+            : `Placed ${located} photo${located === 1 ? "" : "s"} from their own data` +
+              (fromDay ? `, ${fromDay} from their day` : "") +
+              (scanned === 0 ? " — nothing needed reading." : "."),
+        );
+      }
       if (!r.remaining || r.scanned === 0) break;
     }
+    if (scanned > 0) qc.invalidateQueries({ queryKey: ["public-story-photos"] });
   }
 
   async function runSamples(which: "add" | "remove" | "repin" | "geo") {
@@ -139,7 +143,17 @@ export function StoryUploader() {
         }
         pickDefault(rows);
       })
-      .catch(() => {});
+      .catch(() => {})
+      // Read any photo locations still outstanding, without being asked.
+      //
+      // This was a button, and the button never got pressed — so every photo
+      // sat on the position of the phone that uploaded it while its real
+      // coordinates waited unread inside the file. Progress is recorded, so
+      // this is a no-op once the feed is caught up and costs nothing on a
+      // normal visit.
+      .finally(() => {
+        void runGeoBackfill(true);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
