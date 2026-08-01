@@ -20,6 +20,23 @@ export const recordLocationPoint = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => pointInput.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+
+    // Only the trip owner's device lays down the trail.
+    //
+    // The trail is the app's record of where the truck actually went — it
+    // feeds driven distance, the fuel gauge and the route on the map. Anyone
+    // else signed in, on a phone in another country, would write points that
+    // read as impossible jumps and corrupt all three. The documented tracker
+    // is the owner's phone, so enforce exactly that rather than accepting a
+    // fix from every member who happens to have location switched on.
+    const { data: trip } = await supabase
+      .from("trips").select("owner_id").eq("id", data.tripId).maybeSingle();
+    if (!trip || trip.owner_id !== userId) {
+      // Not an error the caller should act on — their device simply is not the
+      // tracker. Silently accept so a member's app does not sit retrying.
+      return { ok: true, recorded: false };
+    }
+
     const { error } = await supabase.from("location_points").insert({
       trip_id: data.tripId,
       user_id: userId,
@@ -31,7 +48,7 @@ export const recordLocationPoint = createServerFn({ method: "POST" })
       is_parked: data.isParked ?? false,
     });
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, recorded: true };
   });
 
 // Owner-only: wipe recent trail points (bad fixes, e.g. a laptop's IP-derived

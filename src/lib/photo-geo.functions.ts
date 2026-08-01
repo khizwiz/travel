@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { readExifGps } from "@/lib/exif-gps";
+import { readExifMeta } from "@/lib/exif-gps";
 import { reverseGeocodeCore } from "@/lib/location.functions";
 import { coordsForDays, reconcileCoord } from "@/lib/day-coord";
 
@@ -36,6 +36,8 @@ export interface BackfillResult {
   located: number;
   named: number;
   fellBackToDay: number;
+  /** Photos moved onto the day their capture date says they belong to. */
+  refiled?: number;
   remaining: number;
   message: string;
 }
@@ -90,8 +92,11 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     }
 
     const { data: days } = await db
-      .from("itinerary_days").select("id").eq("trip_id", trip.id);
+      .from("itinerary_days").select("id, day_date").eq("trip_id", trip.id);
     const dayIds = (days ?? []).map((d: any) => d.id as string);
+    const dayIdByDate = new Map(
+      (days ?? []).map((d: any) => [d.day_date as string, d.id as string]),
+    );
     if (!dayIds.length) {
       return { scanned: 0, located: 0, named: 0, fellBackToDay: 0, remaining: 0, message: "No itinerary days." };
     }
@@ -124,26 +129,46 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
       };
     }
 
-    const dayCoords = await coordsForDays(
-      db,
-      Array.from(new Set(batch.map((p) => p.day_id as string))),
-    );
+    // Every day's location, so a photo can be checked against the journey as a
+    // whole rather than against whichever day it happens to be filed under.
+    const allDayCoords = await coordsForDays(db, dayIds);
+    const tripPoints = Array.from(allDayCoords.values());
 
     let located = 0;
     let named = 0;
     let fellBackToDay = 0;
+    let refiled = 0;
 
     for (const p of batch) {
       const path = p.storage_path as string;
       const head = await readHead(db, path);
-      const exif = head ? await readExifGps(head) : null;
+      const meta = head ? await readExifMeta(head) : { gps: null, takenOn: null };
 
-      // Cross-check the photo's own coordinates against the day it was filed
-      // under, so a picture sorted at home does not drop a pin on a country
-      // the trip never visited.
-      const { coord, source } = reconcileCoord(exif, dayCoords.get(p.day_id as string) ?? null);
+      // File the photo on the day it was actually taken. Uploading a fortnight
+      // of pictures in one go puts them all on whichever day the picker was
+      // showing; the capture date is what the owner actually meant.
+      let dayId = p.day_id as string;
+      if (meta.takenOn) {
+        const correctDay = dayIdByDate.get(meta.takenOn);
+        if (correctDay && correctDay !== dayId) {
+          const { error: mvErr } = await db
+            .from("destination_photos")
+            .update({ day_id: correctDay })
+            .eq("id", p.id as string);
+          if (!mvErr) {
+            dayId = correctDay;
+            refiled++;
+          }
+        }
+      }
+
+      const { coord, source } = reconcileCoord(
+        meta.gps,
+        allDayCoords.get(dayId) ?? null,
+        tripPoints,
+      );
       if (source === "photo") located++;
-      else if (source === "day" || source === "photo-far") fellBackToDay++;
+      else if (source === "day" || source === "photo-off-trip") fellBackToDay++;
 
       if (!coord) continue;
 
@@ -173,10 +198,12 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
       named,
       fellBackToDay,
       remaining,
+      refiled,
       message:
         `Read ${batch.length} photo${batch.length === 1 ? "" : "s"}: ` +
         `${located} placed from the camera's own data` +
         (fellBackToDay ? `, ${fellBackToDay} from their day` : "") +
+        (refiled ? `, ${refiled} moved to the day they were taken` : "") +
         (remaining ? `. ${remaining} still to go.` : "."),
     };
   });

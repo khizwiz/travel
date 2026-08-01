@@ -262,24 +262,23 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
     // in one sitting all landed on a single point of the map — wherever the
     // phone was at the time of posting.
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const today = new Date().toISOString().slice(0, 10);
-    const forDate = await dayDate(supabaseAdmin, data.dayId);
     const exifFix =
       data.exifLat != null && data.exifLng != null
         ? { lat: data.exifLat, lng: data.exifLng }
         : null;
-    const deviceFix =
-      data.lat != null && data.lng != null ? { lat: data.lat, lng: data.lng } : null;
     const dayFix = await coordForDay(supabaseAdmin, data.dayId);
-    // Cross-check the photo's own coordinates against its day: metadata wins
-    // when they agree, the day wins when they are continents apart. A photo
-    // sorted at home is genuinely at home, and pinning it there scatters the
-    // map with places the trip never went.
-    const coord = exifFix
-      ? reconcileCoord(exifFix, dayFix).coord
-      : forDate === today && deviceFix
-        ? deviceFix
-        : dayFix;
+
+    // The uploading device's position is never used, deliberately.
+    //
+    // Whoever posts a photo is not necessarily where it was taken — someone
+    // maintaining the app from another country, or the owner uploading in the
+    // evening a picture from that morning's drive. Stamping the uploader's
+    // location onto the trip's photos is how every one of them ended up on a
+    // single pin hundreds of kilometres from the journey.
+    //
+    // Only two sources are trusted: what the camera recorded, and failing
+    // that, the day the photo belongs to.
+    const coord = exifFix ? reconcileCoord(exifFix, dayFix).coord : dayFix;
 
     // Retry without geo if the lat/lng migration hasn't reached this database,
     // so uploads never break on schema drift.

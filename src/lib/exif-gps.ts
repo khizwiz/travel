@@ -27,6 +27,9 @@ export interface ExifGps {
 const SCAN_BYTES = 2 * 1024 * 1024;
 
 const TAG_GPS_IFD = 0x8825;
+const TAG_EXIF_IFD = 0x8769;
+const TAG_DATETIME_ORIGINAL = 0x9003;
+const TAG_DATETIME_DIGITIZED = 0x9004;
 const GPS_LAT_REF = 1;
 const GPS_LAT = 2;
 const GPS_LNG_REF = 3;
@@ -88,12 +91,33 @@ function findExifMarker(bytes: Uint8Array): number {
   return -1;
 }
 
-export async function readExifGps(file: Blob): Promise<ExifGps | null> {
+export interface ExifMeta {
+  gps: ExifGps | null;
+  /**
+   * When the shutter fired, as YYYY-MM-DD. This is what files a photo on the
+   * right itinerary day — far more reliable than whichever day happened to be
+   * selected in a dropdown while uploading a fortnight's pictures at once.
+   */
+  takenOn: string | null;
+}
+
+/** EXIF stores dates as "YYYY:MM:DD HH:MM:SS", in local time, no zone. */
+function parseExifDate(s: string): string | null {
+  const m = /^(\d{4}):(\d{2}):(\d{2})/.exec(s.trim());
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const year = Number(y);
+  if (year < 1990 || year > 2100) return null;
+  return `${y}-${mo}-${d}`;
+}
+
+export async function readExifMeta(file: Blob): Promise<ExifMeta> {
+  const empty: ExifMeta = { gps: null, takenOn: null };
   try {
     const buf = await file.slice(0, SCAN_BYTES).arrayBuffer();
     const bytes = new Uint8Array(buf);
     const tiff = findExifMarker(bytes);
-    if (tiff < 0) return null;
+    if (tiff < 0) return empty;
 
     const view = new DataView(buf);
     const little = bytes[tiff] === 0x49;
@@ -101,18 +125,38 @@ export async function readExifGps(file: Blob): Promise<ExifGps | null> {
 
     // IFD0, then its GPS sub-IFD pointer.
     const ifd0 = tiff + r.u32(tiff + 4);
-    if (ifd0 + 2 > bytes.length) return null;
+    if (ifd0 + 2 > bytes.length) return empty;
     const entries = r.u16(ifd0);
     let gpsOffset = -1;
+    let exifOffset = -1;
     for (let i = 0; i < entries; i++) {
       const entry = ifd0 + 2 + i * 12;
-      if (entry + 12 > bytes.length) return null;
-      if (r.u16(entry) === TAG_GPS_IFD) {
-        gpsOffset = tiff + r.u32(entry + 8);
-        break;
+      if (entry + 12 > bytes.length) return empty;
+      const tag = r.u16(entry);
+      if (tag === TAG_GPS_IFD) gpsOffset = tiff + r.u32(entry + 8);
+      else if (tag === TAG_EXIF_IFD) exifOffset = tiff + r.u32(entry + 8);
+    }
+
+    // Capture date, from the Exif sub-IFD.
+    let takenOn: string | null = null;
+    if (exifOffset > 0 && exifOffset + 2 <= bytes.length) {
+      const n = r.u16(exifOffset);
+      for (let i = 0; i < n; i++) {
+        const entry = exifOffset + 2 + i * 12;
+        if (entry + 12 > bytes.length) break;
+        const tag = r.u16(entry);
+        if (tag !== TAG_DATETIME_ORIGINAL && tag !== TAG_DATETIME_DIGITIZED) continue;
+        const count = r.u32(entry + 4);
+        const at = tiff + r.u32(entry + 8);
+        if (count < 10 || at + 10 > bytes.length) continue;
+        const s = String.fromCharCode(...bytes.subarray(at, at + Math.min(19, count)));
+        const parsed = parseExifDate(s);
+        // DateTimeOriginal is preferred; digitized is a fallback.
+        if (parsed && (tag === TAG_DATETIME_ORIGINAL || !takenOn)) takenOn = parsed;
       }
     }
-    if (gpsOffset < 0 || gpsOffset + 2 > bytes.length) return null;
+
+    if (gpsOffset < 0 || gpsOffset + 2 > bytes.length) return { gps: null, takenOn };
 
     const gpsEntries = r.u16(gpsOffset);
     let lat: number | null = null;
@@ -122,7 +166,7 @@ export async function readExifGps(file: Blob): Promise<ExifGps | null> {
 
     for (let i = 0; i < gpsEntries; i++) {
       const entry = gpsOffset + 2 + i * 12;
-      if (entry + 12 > bytes.length) return null;
+      if (entry + 12 > bytes.length) return { gps: null, takenOn };
       const tag = r.u16(entry);
       const count = r.u32(entry + 4);
       const valueAt = r.u32(entry + 8);
@@ -133,16 +177,21 @@ export async function readExifGps(file: Blob): Promise<ExifGps | null> {
       else if (tag === GPS_LNG) lng = dmsToDecimal(r, valueAt, tiff, count);
     }
 
-    if (lat == null || lng == null) return null;
+    if (lat == null || lng == null) return { gps: null, takenOn };
     if (latRef === "S") lat = -lat;
     if (lngRef === "W") lng = -lng;
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { gps: null, takenOn };
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return { gps: null, takenOn };
     // A photo at exactly 0,0 is a null island artefact, not a location.
-    if (lat === 0 && lng === 0) return null;
+    if (lat === 0 && lng === 0) return { gps: null, takenOn };
 
-    return { lat, lng };
+    return { gps: { lat, lng }, takenOn };
   } catch {
-    return null;
+    return empty;
   }
+}
+
+/** Just the coordinates, for callers that do not care when it was taken. */
+export async function readExifGps(file: Blob): Promise<ExifGps | null> {
+  return (await readExifMeta(file)).gps;
 }

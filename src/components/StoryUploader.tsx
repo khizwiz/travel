@@ -180,12 +180,12 @@ export function StoryUploader() {
             // The caption goes on the first photo of the batch.
             caption: posted === 0 ? caption.trim() || null : null,
             isCover: false,
-            // Where the camera says the photo was taken, when it says so.
+            // Only what the camera recorded. This phone's own position is
+            // deliberately not sent: whoever uploads is not necessarily where
+            // the photo was taken, and stamping it on is what put the whole
+            // trip's photos on one pin.
             exifLat: exif?.lat ?? null,
             exifLng: exif?.lng ?? null,
-            // The phone's position now — only meaningful for today's photos.
-            lat: liveFix?.lat ?? null,
-            lng: liveFix?.lng ?? null,
           },
         });
         posted += 1;

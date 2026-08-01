@@ -63,37 +63,48 @@ export async function coordForDay(db: any, dayId: string): Promise<Coord | null>
 }
 
 /**
- * How far a photo may sit from its day's known location and still be believed.
+ * How far from ANY known point of the trip a photo may sit and still count as
+ * having been taken on it.
  *
- * A day covers a drive, so the two ends can be hundreds of kilometres apart;
- * this has to be loose enough not to reject a genuine roadside photo, and
- * tight enough to catch a picture that plainly was not taken on that leg.
+ * Deliberately generous. Only some days have coordinates at all — they come
+ * from booked stays — so the known points are sparse and the real gaps between
+ * them are large: Zagreb is around 300 km from both Budapest and Rimini, and a
+ * photo taken on that drive is entirely genuine. This is meant to catch a
+ * picture from another country, not to police the route, so it errs towards
+ * believing the camera.
  */
-const PLAUSIBLE_KM = 250;
+const ON_TRIP_KM = 400;
 
-export type CoordSource = "photo" | "day" | "photo-far" | "none";
+export type CoordSource = "photo" | "day" | "photo-off-trip" | "none";
 
 /**
- * Decide where a photo belongs, cross-checking its own metadata against the
- * day it was filed under.
+ * Decide where a photo belongs.
  *
- * Metadata wins when the two agree, because the camera knows best. When they
- * disagree wildly the day wins — a photo taken at home while sorting through
- * the trip carries perfectly valid coordinates for the wrong country, and
- * pinning it there scatters the map with places the trip never went. The day
- * is the thing the owner deliberately chose.
+ * The camera's own coordinates win, and they are checked against the trip as a
+ * whole — never against the single day the photo happens to be filed under.
+ * That distinction matters more than it looks: photos get uploaded in bulk and
+ * land on whatever day the picker was showing, so a picture genuinely taken in
+ * Rimini can sit under a Budapest day. Comparing it with that day would put it
+ * back in Budapest and throw away the one piece of true evidence there is.
+ *
+ * The day is a fallback for photos with no metadata, and a correction only for
+ * photos taken nowhere near the journey at all — sorting pictures at home
+ * produces valid coordinates for a country the trip never entered.
  */
 export function reconcileCoord(
   exif: Coord | null,
   day: Coord | null,
+  tripPoints: Coord[] = [],
 ): { coord: Coord | null; source: CoordSource } {
   if (!exif && !day) return { coord: null, source: "none" };
   if (!exif) return { coord: day, source: "day" };
-  if (!day) return { coord: exif, source: "photo" };
-  const apart = haversineKm(exif, day);
-  return apart <= PLAUSIBLE_KM
-    ? { coord: exif, source: "photo" }
-    : { coord: day, source: "photo-far" };
+  if (!tripPoints.length) return { coord: exif, source: "photo" };
+
+  const onTrip = tripPoints.some((p) => haversineKm(exif, p) <= ON_TRIP_KM);
+  if (onTrip) return { coord: exif, source: "photo" };
+  return day
+    ? { coord: day, source: "photo-off-trip" }
+    : { coord: exif, source: "photo" };
 }
 
 /** The day's calendar date, or null. */
