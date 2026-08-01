@@ -74,9 +74,11 @@ export const VEHICLE = {
   lastServiceOdometer: null as number | null, // information required
 };
 
-// The app soft-launches for the public on 17 July 2026 at 05:00 Europe/Istanbul.
-// Owner + crew bypass this gate. Everyone else sees a countdown splash.
-export const APP_KICKOFF_ISO = "2026-07-17T05:00:00+03:00";
+// The app soft-launches for the public the day before departure, 05:00
+// Europe/Istanbul. Owner + crew bypass this gate; everyone else sees a
+// countdown splash. Moved with the itinerary when the real start turned out to
+// be 16 July, two days earlier than the plan recorded.
+export const APP_KICKOFF_ISO = "2026-07-15T05:00:00+03:00";
 export const APP_KICKOFF_MS = new Date(APP_KICKOFF_ISO).getTime();
 
 export function isAppLive(nowMs: number = Date.now()): boolean {
@@ -89,9 +91,15 @@ const D = (dateISO: string, partial: Omit<ItineraryDay, "id" | "date">): Itinera
   ...partial,
 });
 
+/** `iso` plus `days`, month and year rollover handled. */
+const isoPlus = (iso: string, days: number): string =>
+  new Date(new Date(iso + "T00:00:00Z").getTime() + days * 86400000)
+    .toISOString()
+    .slice(0, 10);
+
 
 export const ITINERARY: ItineraryDay[] = [
-  D("2026-07-18", {
+  D("2026-07-16", {
     from: "Istanbul",
     to: "Sofia",
     transport: "drive",
@@ -103,7 +111,7 @@ export const ITINERARY: ItineraryDay[] = [
     missing: ["Sofia accommodation"],
     notes: "Departure leg. Border at Kapıkule.",
   }),
-  D("2026-07-19", {
+  D("2026-07-17", {
     from: "Sofia",
     to: "Belgrade",
     transport: "drive",
@@ -114,7 +122,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Belgrade accommodation"],
   }),
-  D("2026-07-20", {
+  D("2026-07-18", {
     from: "Belgrade",
     to: "Budapest",
     transport: "drive",
@@ -125,7 +133,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Budapest accommodation"],
   }),
-  D("2026-07-21", {
+  D("2026-07-19", {
     from: "Budapest",
     to: "Budapest",
     transport: "drive",
@@ -136,7 +144,7 @@ export const ITINERARY: ItineraryDay[] = [
     notes: "Rest day in Budapest.",
     missing: ["Budapest accommodation"],
   }),
-  D("2026-07-22", {
+  D("2026-07-20", {
     from: "Budapest",
     to: "Budapest",
     transport: "drive",
@@ -147,7 +155,7 @@ export const ITINERARY: ItineraryDay[] = [
     notes: "Second day in Budapest.",
     missing: ["Budapest accommodation"],
   }),
-  D("2026-07-23", {
+  D("2026-07-21", {
     from: "Budapest",
     to: "Zagreb",
     transport: "drive",
@@ -157,7 +165,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Zagreb accommodation"],
   }),
-  D("2026-07-24", {
+  D("2026-07-22", {
     from: "Zagreb",
     to: "Riccione",
     transport: "drive",
@@ -167,7 +175,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Riccione accommodation"],
   }),
-  D("2026-07-25", {
+  D("2026-07-23", {
     from: "Riccione",
     to: "Rome",
     transport: "drive",
@@ -177,7 +185,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Rome accommodation"],
   }),
-  D("2026-07-26", {
+  D("2026-07-24", {
     from: "Rome",
     to: "Berlin",
     transport: "flight",
@@ -203,7 +211,7 @@ export const ITINERARY: ItineraryDay[] = [
       privateNote: "Exact address, booking URL and reference are private.",
     },
   }),
-  ...[27, 28, 29].map((d) =>
+  ...[25, 26, 27].map((d) =>
     D(`2026-07-${d}`, {
       from: "Berlin",
       to: "Berlin",
@@ -219,7 +227,7 @@ export const ITINERARY: ItineraryDay[] = [
       notes: "Berlin stay.",
     }),
   ),
-  D("2026-07-30", {
+  D("2026-07-28", {
     from: "Berlin",
     to: "Rome",
     transport: "flight",
@@ -242,7 +250,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Rome accommodation (return night)"],
   }),
-  D("2026-07-31", {
+  D("2026-07-29", {
     from: "Rome",
     to: "Lake Garda",
     transport: "drive",
@@ -252,9 +260,14 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Lake Garda accommodation"],
   }),
-  ...Array.from({ length: 18 }, (_, i) => {
-    const day = 1 + i;
-    return D(`2026-08-${String(day).padStart(2, "0")}`, {
+  // The open stretch now begins in July and runs into August, which the old
+  // `2026-08-${day}` template could not express — hence the date helper.
+  //
+  // 17, not 18: the last generated day collided with the fixed day that
+  // follows it, so the itinerary carried two entries for one date and the
+  // generated one was permanently shadowed. That predates the date shift.
+  ...Array.from({ length: 17 }, (_, i) => {
+    return D(isoPlus("2026-07-30", i), {
       from: "Open planning period",
       to: "Open planning period",
       transport: "drive",
@@ -268,7 +281,7 @@ export const ITINERARY: ItineraryDay[] = [
   }),
 
 
-  D("2026-08-18", {
+  D("2026-08-16", {
     from: "Milan / open",
     to: "Verona",
     transport: "drive",
@@ -278,7 +291,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     notes: "Arrive Verona; reunite with Simona & Fez for the drive home.",
   }),
-  D("2026-08-19", {
+  D("2026-08-17", {
     from: "Verona",
     to: "Verona",
     transport: "drive",
@@ -289,7 +302,7 @@ export const ITINERARY: ItineraryDay[] = [
     kind: "rest",
     notes: "Rest day in Verona before the ferry.",
   }),
-  D("2026-08-20", {
+  D("2026-08-18", {
     from: "Verona",
     to: "Ancona (ferry)",
     transport: "mixed",
@@ -306,7 +319,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Ancona–Patras ferry booking reference"],
   }),
-  D("2026-08-21", {
+  D("2026-08-19", {
     from: "Patras (arrive 15:00)",
     to: "Athens",
     transport: "drive",
@@ -317,7 +330,7 @@ export const ITINERARY: ItineraryDay[] = [
     notes: "Ferry arrives Patras 15:00; drive on to Athens for the night.",
     missing: ["Athens accommodation"],
   }),
-  D("2026-08-22", {
+  D("2026-08-20", {
     from: "Athens",
     to: "Athens",
     transport: "drive",
@@ -328,7 +341,7 @@ export const ITINERARY: ItineraryDay[] = [
     notes: "Athens rest day. 0 driving hours.",
     accommodation: null,
   }),
-  D("2026-08-23", {
+  D("2026-08-21", {
     from: "Athens",
     to: "Pelion / Volos area",
     transport: "drive",
@@ -338,7 +351,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Pelion / Volos accommodation"],
   }),
-  D("2026-08-24", {
+  D("2026-08-22", {
     from: "Pelion / Volos area",
     to: "Halkidiki / near Thessaloniki",
     transport: "drive",
@@ -348,7 +361,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Halkidiki accommodation"],
   }),
-  D("2026-08-25", {
+  D("2026-08-23", {
     from: "Halkidiki / Thessaloniki",
     to: "Alexandroupoli",
     transport: "drive",
@@ -358,7 +371,7 @@ export const ITINERARY: ItineraryDay[] = [
     accommodation: null,
     missing: ["Alexandroupoli accommodation"],
   }),
-  D("2026-08-26", {
+  D("2026-08-24", {
     from: "Alexandroupoli",
     to: "Edirne",
     transport: "drive",
@@ -370,7 +383,7 @@ export const ITINERARY: ItineraryDay[] = [
     notes: "Cross via Kipi/İpsala border into Turkey. Overnight in Edirne.",
     missing: ["Edirne accommodation"],
   }),
-  D("2026-08-27", {
+  D("2026-08-25", {
     from: "Edirne",
     to: "Istanbul",
     transport: "drive",
