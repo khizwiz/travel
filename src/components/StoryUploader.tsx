@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { Camera, ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
+import { Camera, ImagePlus, Loader2, MapPin, Trash2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { createDestinationPhoto, listOwnerTripDays } from "@/lib/photos.functions";
+import {
+  createDestinationPhoto,
+  listOwnerTripDays,
+  repinDestinationPhotos,
+} from "@/lib/photos.functions";
 import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { prepareImageForUpload } from "@/lib/image-prep";
 import { removeSamplePhotos, seedSamplePhotos } from "@/lib/seed-photos.functions";
@@ -24,6 +28,7 @@ export function StoryUploader() {
   const ensureScaffold = useServerFn(ensureTripScaffold);
   const addSamples = useServerFn(seedSamplePhotos);
   const dropSamples = useServerFn(removeSamplePhotos);
+  const repin = useServerFn(repinDestinationPhotos);
   const { liveFix } = useApp();
   const qc = useQueryClient();
 
@@ -34,18 +39,20 @@ export function StoryUploader() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [sampling, setSampling] = useState<"add" | "remove" | null>(null);
+  const [sampling, setSampling] = useState<"add" | "remove" | "repin" | null>(null);
   const [sampleMsg, setSampleMsg] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  async function runSamples(which: "add" | "remove") {
+  async function runSamples(which: "add" | "remove" | "repin") {
     setSampling(which);
     setSampleMsg(null);
     try {
       const r =
         which === "add"
           ? await addSamples({ data: {} })
-          : await dropSamples({ data: {} });
+          : which === "remove"
+            ? await dropSamples({ data: {} })
+            : await repin({ data: {} });
       setSampleMsg(r.message);
       qc.invalidateQueries({ queryKey: ["public-story-photos"] });
     } catch (e: any) {
@@ -272,10 +279,24 @@ export function StoryUploader() {
             )}
             Remove samples
           </button>
+          <button
+            onClick={() => runSamples("repin")}
+            disabled={sampling !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-60"
+          >
+            {sampling === "repin" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MapPin className="h-3.5 w-3.5" />
+            )}
+            Re-pin photos to their day
+          </button>
           {sampleMsg && <span className="text-xs text-muted-foreground">{sampleMsg}</span>}
         </div>
         <p className="mt-1.5 text-[11px] text-muted-foreground">
-          Drawn by the app, not photographs — they prove posting works end to end.
+          Samples are drawn by the app, not photographs. Re-pinning moves photos
+          uploaded earlier onto the map at the place their day was, rather than
+          where the phone was when you posted them.
         </p>
       </div>
     </section>

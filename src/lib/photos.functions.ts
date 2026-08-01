@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { coordForDay, coordsForDays, dayDate } from "@/lib/day-coord";
 
 // List all itinerary days for the default trip so admins can pick one when
 // posting a photo to the Story feed.
@@ -206,11 +207,28 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
       is_cover: data.isCover ?? false,
       uploaded_by: context.userId,
     };
-    // Include GPS if provided; retry without it if the lat/lng migration
-    // hasn't been applied yet so uploads never break on schema drift.
-    const withGeo = data.lat != null && data.lng != null
-      ? { ...base, lat: data.lat, lng: data.lng }
-      : base;
+
+    // Pin the photo to its DAY, not to wherever the phone is right now.
+    //
+    // The uploader sends the current GPS fix, and this used to store it
+    // unconditionally — so a fortnight of photos posted in one sitting all
+    // landed on a single point on the map, wherever the uploading phone
+    // happened to be. The device fix is only meaningful when the photo belongs
+    // to today; for any earlier day the day's own location is the truth, and
+    // no known location means no pin rather than a wrong one.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const today = new Date().toISOString().slice(0, 10);
+    const forDate = await dayDate(supabaseAdmin, data.dayId);
+    const deviceFix =
+      data.lat != null && data.lng != null ? { lat: data.lat, lng: data.lng } : null;
+    const coord =
+      forDate === today && deviceFix
+        ? deviceFix
+        : await coordForDay(supabaseAdmin, data.dayId);
+
+    // Retry without geo if the lat/lng migration hasn't reached this database,
+    // so uploads never break on schema drift.
+    const withGeo = coord ? { ...base, lat: coord.lat, lng: coord.lng } : base;
     let { data: row, error } = await context.supabase
       .from("destination_photos").insert(withGeo).select("id").single();
     if (error && withGeo !== base && /column/i.test(error.message)) {
@@ -219,6 +237,71 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
     }
     if (error || !row) throw new Error(error?.message ?? "Insert failed");
     return { id: row.id };
+  });
+
+/**
+ * Re-pin existing photos to the day they belong to.
+ *
+ * Everything uploaded before the fix above carries the uploading phone's
+ * position rather than the day's, which is why a whole trip's photos can sit
+ * on one point of the map. This recomputes each pin from its day. Photos on
+ * today's day are left alone — their device fix is the better answer.
+ */
+export const repinDestinationPhotos = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ tripId: z.string().uuid().optional() }).parse(d ?? {}))
+  .handler(async ({ context }): Promise<{ repinned: number; cleared: number; message: string }> => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: trip } = await supabaseAdmin
+      .from("trips").select("id, owner_id").eq("slug", "eu-tripping-2026").maybeSingle();
+    if (!trip) throw new Error("No trip found");
+    if ((trip as any).owner_id !== context.userId) {
+      throw new Error("Only the trip owner can do this");
+    }
+
+    const { data: days } = await supabaseAdmin
+      .from("itinerary_days").select("id, day_date").eq("trip_id", trip.id);
+    const dateOf = new Map((days ?? []).map((d: any) => [d.id as string, d.day_date as string]));
+    if (!dateOf.size) return { repinned: 0, cleared: 0, message: "No itinerary days." };
+
+    const { data: photos } = await supabaseAdmin
+      .from("destination_photos")
+      .select("id, day_id")
+      .in("day_id", Array.from(dateOf.keys()));
+    if (!photos?.length) return { repinned: 0, cleared: 0, message: "No photos to re-pin." };
+
+    const today = new Date().toISOString().slice(0, 10);
+    const targets = photos.filter((p: any) => dateOf.get(p.day_id as string) !== today);
+    const coords = await coordsForDays(
+      supabaseAdmin,
+      Array.from(new Set(targets.map((p: any) => p.day_id as string))),
+    );
+
+    let repinned = 0;
+    let cleared = 0;
+    for (const p of targets) {
+      const c = coords.get((p as any).day_id as string) ?? null;
+      const { error } = await supabaseAdmin
+        .from("destination_photos")
+        .update(c ? { lat: c.lat, lng: c.lng } : { lat: null, lng: null })
+        .eq("id", (p as any).id as string);
+      if (error) {
+        if (/column/i.test(error.message)) {
+          return { repinned, cleared, message: "This database has no photo location columns yet." };
+        }
+        throw new Error(error.message);
+      }
+      if (c) repinned++;
+      else cleared++;
+    }
+
+    return {
+      repinned,
+      cleared,
+      message:
+        `Re-pinned ${repinned} photo${repinned === 1 ? "" : "s"} to their day` +
+        (cleared ? `, cleared ${cleared} with no known location` : "") + ".",
+    };
   });
 
 export const deleteDestinationPhoto = createServerFn({ method: "POST" })
