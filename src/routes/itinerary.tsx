@@ -220,7 +220,9 @@ function ItineraryPage() {
                   collapsedByDefault && !isOpen ? "p-3" : "p-4",
                   isLive && "border-success/50 ring-2 ring-success/30",
                   isActive && !isLive && "ring-2 ring-primary/30",
-                  collapsedByDefault && !isOpen && "opacity-70",
+                  // Collapsed stays stay compact, but not faded — a finished
+                  // day is still part of the journey.
+                  collapsedByDefault && !isOpen && "opacity-95",
                   stay.isOpen && "border-dashed bg-muted/20",
                 )}
               >
@@ -239,7 +241,11 @@ function ItineraryPage() {
                           alt=""
                           className={cn(
                             "h-12 w-12 shrink-0 rounded-full border border-border object-cover",
-                            isPast && "grayscale opacity-70",
+                            // Places already visited used to render grayscale
+                            // and dimmed, which made the part of the trip that
+                            // actually happened — the part with the photos and
+                            // the memories — the deadest thing on the page.
+                            // Being behind you is not a reason to look faded.
                             isLive && "ring-2 ring-success/60",
                           )}
                         />
