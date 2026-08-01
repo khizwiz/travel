@@ -192,6 +192,8 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
     storagePath: z.string().min(1).max(500),
     caption: z.string().trim().max(300).optional().nullable(),
     isCover: z.boolean().optional(),
+    exifLat: z.number().min(-90).max(90).optional().nullable(),
+    exifLng: z.number().min(-180).max(180).optional().nullable(),
     lat: z.number().min(-90).max(90).optional().nullable(),
     lng: z.number().min(-180).max(180).optional().nullable(),
   }).parse(d))
@@ -208,23 +210,29 @@ export const createDestinationPhoto = createServerFn({ method: "POST" })
       uploaded_by: context.userId,
     };
 
-    // Pin the photo to its DAY, not to wherever the phone is right now.
+    // Where the photo was taken, best source first.
     //
-    // The uploader sends the current GPS fix, and this used to store it
-    // unconditionally — so a fortnight of photos posted in one sitting all
-    // landed on a single point on the map, wherever the uploading phone
-    // happened to be. The device fix is only meaningful when the photo belongs
-    // to today; for any earlier day the day's own location is the truth, and
-    // no known location means no pin rather than a wrong one.
+    //  1. The camera's own EXIF GPS — recorded at the moment of the shot, and
+    //     correct however long afterwards the photo is posted.
+    //  2. The phone's position now, but only for a photo filed under today.
+    //  3. The day's own location, from the stay booked for it.
+    //  4. Nothing, and therefore no pin.
+    //
+    // This used to be (2) unconditionally, so a fortnight of photos uploaded
+    // in one sitting all landed on a single point of the map — wherever the
+    // phone was at the time of posting.
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const today = new Date().toISOString().slice(0, 10);
     const forDate = await dayDate(supabaseAdmin, data.dayId);
+    const exifFix =
+      data.exifLat != null && data.exifLng != null
+        ? { lat: data.exifLat, lng: data.exifLng }
+        : null;
     const deviceFix =
       data.lat != null && data.lng != null ? { lat: data.lat, lng: data.lng } : null;
     const coord =
-      forDate === today && deviceFix
-        ? deviceFix
-        : await coordForDay(supabaseAdmin, data.dayId);
+      exifFix ??
+      (forDate === today && deviceFix ? deviceFix : await coordForDay(supabaseAdmin, data.dayId));
 
     // Retry without geo if the lat/lng migration hasn't reached this database,
     // so uploads never break on schema drift.

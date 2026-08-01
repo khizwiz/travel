@@ -10,6 +10,7 @@ import {
 } from "@/lib/photos.functions";
 import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { prepareImageForUpload } from "@/lib/image-prep";
+import { readExifGps } from "@/lib/exif-gps";
 import { removeSamplePhotos, seedSamplePhotos } from "@/lib/seed-photos.functions";
 import { formatDate, ITINERARY } from "@/lib/trip-data";
 import { useApp } from "@/lib/app-state";
@@ -118,6 +119,9 @@ export function StoryUploader() {
     try {
       while (remaining.length) {
         const original = remaining[0];
+        // Read where the photo was taken BEFORE touching it — converting HEIC
+        // to JPEG re-encodes through a canvas, which drops every EXIF tag.
+        const exif = await readExifGps(original);
         // iPhone HEIC becomes JPEG here, and huge photos are scaled down, so
         // the post is visible to everyone and the upload survives a roadside
         // connection. See image-prep.ts for why this is not optional.
@@ -141,7 +145,10 @@ export function StoryUploader() {
             // The caption goes on the first photo of the batch.
             caption: posted === 0 ? caption.trim() || null : null,
             isCover: false,
-            // Pin the photo to the map at the spot it was posted from.
+            // Where the camera says the photo was taken, when it says so.
+            exifLat: exif?.lat ?? null,
+            exifLng: exif?.lng ?? null,
+            // The phone's position now — only meaningful for today's photos.
             lat: liveFix?.lat ?? null,
             lng: liveFix?.lng ?? null,
           },
