@@ -158,6 +158,67 @@ export async function reverseGeocodeCore(lat: number, lng: number): Promise<Plac
   }
 }
 
+/**
+ * A place name to coordinates, cached forever-ish.
+ *
+ * The map could only place a photo if its day had a booked stay with
+ * coordinates, or if the day's title happened to match one of nineteen
+ * hardcoded cities. Real titles look like "Re-routed: Rimini, Italy" or
+ * "Budapest → Zagreb" and match neither, so most days had no location and
+ * their photos had nowhere to go — even though the story page has been
+ * showing exactly which town each photo belongs to all along.
+ *
+ * Names do not move, so a hit is cached under the same 30-day TTL as reverse
+ * lookups and the network is touched once per place, ever.
+ */
+export async function geocodePlaceCore(
+  name: string,
+): Promise<{ lat: number; lng: number } | null> {
+  const query = placeQuery(name);
+  if (!query) return null;
+  const key = `geocode:${query.toLowerCase()}`;
+
+  const cached = await cacheRead<{ lat: number; lng: number }>(key, GEOCODE_TTL_MS);
+  if (cached) return cached;
+
+  const url =
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&` +
+    `q=${encodeURIComponent(query)}`;
+  const res = await fetchWithRetry(url);
+  if (!res?.ok) return null;
+  try {
+    const rows = (await res.json()) as Array<{ lat?: string; lon?: string }>;
+    const first = rows?.[0];
+    const lat = Number(first?.lat);
+    const lng = Number(first?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    const coord = { lat, lng };
+    await cacheWrite(key, coord);
+    return coord;
+  } catch (e) {
+    console.error("[location] forward geocode parse failed", e);
+    return null;
+  }
+}
+
+/**
+ * Turn a day's title into something a gazetteer can find.
+ *
+ * Titles carry app vocabulary the outside world does not know: a "Re-routed:"
+ * prefix, and "from → to" for a driving day. A journey resolves to where it
+ * ended, since that is where the evening and most of the photographs happen.
+ */
+export function placeQuery(title: string): string | null {
+  let s = String(title ?? "").trim();
+  if (!s) return null;
+  s = s.replace(/^re-?routed\s*:\s*/i, "").trim();
+  if (s.includes("→")) s = s.split("→").pop()!.trim();
+  else if (/\s->\s/.test(s)) s = s.split("->").pop()!.trim();
+  // Placeholder days name no real place.
+  if (/^(open (planning period|day)|rest day|untitled|booking)$/i.test(s)) return null;
+  return s || null;
+}
+
 export const reverseGeocode = createServerFn({ method: "GET" })
   .middleware([requireCapability("location.viewPrecise")])
   .inputValidator((d: unknown) => reverseInput.parse(d))

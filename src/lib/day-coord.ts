@@ -48,9 +48,22 @@ export async function coordsForDays(db: any, dayIds: string[]): Promise<Map<stri
       .from("itinerary_days")
       .select("id, title")
       .in("id", missing);
+
+    // Look the name up properly rather than only checking it against the
+    // nineteen cities the app happens to know. The story page has always shown
+    // which town each photo belongs to; this is what finally lets the map
+    // agree with it. Results are cached per place, so a trip's worth of days
+    // costs a handful of lookups once.
+    const { geocodePlaceCore } = await import("@/lib/location.functions");
     for (const d of days ?? []) {
-      const c = pickCoord(String((d as any).title ?? ""));
-      if (c) out.set((d as any).id as string, c);
+      const title = String((d as any).title ?? "");
+      const local = pickCoord(title);
+      if (local) {
+        out.set((d as any).id as string, local);
+        continue;
+      }
+      const found = await geocodePlaceCore(title);
+      if (found) out.set((d as any).id as string, found);
     }
   }
 
