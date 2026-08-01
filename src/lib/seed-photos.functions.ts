@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 import {
   MAX_SAMPLES,
   removeSamples,
@@ -32,7 +33,7 @@ async function ownedTrip(userId: string, tripId?: string) {
     ? await q.eq("id", tripId).maybeSingle()
     : await q.eq("slug", "eu-tripping-2026").maybeSingle();
   if (!data) throw new Error("No trip found");
-  if ((data as any).owner_id !== userId) throw new Error("Only the trip owner can do this");
+  await assertTripOwner(db, userId, (data as any).id as string);
   return data as { id: string; owner_id: string; slug: string };
 }
 

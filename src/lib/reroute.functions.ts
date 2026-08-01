@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { aiModel, aiUrl, lovableAiHeaders } from "./ai-gateway.server";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 
 const TRIP_SLUG = "eu-tripping-2026";
 
@@ -9,7 +10,10 @@ async function getOwnedTripId(supabase: any, userId: string) {
   const { data: trip } = await supabase
     .from("trips").select("id, owner_id").eq("slug", TRIP_SLUG).maybeSingle();
   if (!trip) throw new Error("Trip not found");
-  if (trip.owner_id !== userId) throw new Error("Forbidden");
+  // See trip-owner.server.ts — this is what stopped the owner re-planning a
+  // day from the itinerary.
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  await assertTripOwner(supabaseAdmin, userId, trip.id as string);
   return trip.id as string;
 }
 

@@ -1,11 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 
 async function ensureOwner(supabase: any, userId: string, tripId: string) {
-  const { data: trip } = await supabase
-    .from("trips").select("owner_id").eq("id", tripId).single();
-  if (!trip || trip.owner_id !== userId) throw new Error("Forbidden");
+  // Owner identity is recorded in more than one place and they do not always
+  // agree — see trip-owner.server.ts. Comparing only with trips.owner_id
+  // locked the app owner out of editing their own trip.
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  await assertTripOwner(supabaseAdmin, userId, tripId);
+  void supabase;
 }
 
 // List itinerary_days within a date range (owner).

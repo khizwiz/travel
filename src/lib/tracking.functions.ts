@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { getDefaultTrip } from "@/lib/access.functions";
+import { assertTripOwner, checkTripOwner } from "@/lib/trip-owner.server";
 
 const pointInput = z.object({
   tripId: z.string().uuid(),
@@ -29,9 +30,9 @@ export const recordLocationPoint = createServerFn({ method: "POST" })
     // read as impossible jumps and corrupt all three. The documented tracker
     // is the owner's phone, so enforce exactly that rather than accepting a
     // fix from every member who happens to have location switched on.
-    const { data: trip } = await supabase
-      .from("trips").select("owner_id").eq("id", data.tripId).maybeSingle();
-    if (!trip || trip.owner_id !== userId) {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { isOwner } = await checkTripOwner(supabaseAdmin, userId, data.tripId);
+    if (!isOwner) {
       // Not an error the caller should act on — their device simply is not the
       // tracker. Silently accept so a member's app does not sit retrying.
       return { ok: true, recorded: false };
@@ -60,10 +61,8 @@ export const clearRecentLocationPoints = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { data: trip } = await supabase
-      .from("trips").select("owner_id").eq("id", data.tripId).single();
-    if (!trip || trip.owner_id !== userId) throw new Error("Forbidden");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await assertTripOwner(supabaseAdmin, userId, data.tripId);
     const cutoff = new Date(Date.now() - data.hours * 3600_000).toISOString();
     const { error, count } = await supabaseAdmin
       .from("location_points")

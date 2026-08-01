@@ -3,6 +3,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { requireCapability } from "@/integrations/supabase/permission-middleware";
 import { z } from "zod";
 import { getTrail, kmAt, type Trail } from "@/lib/location.service";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 import { VEHICLE } from "@/lib/trip-data";
 
 // ── Fuel tracking, derived from the ACTUAL GPS route ──────────────────────────
@@ -202,7 +203,7 @@ export const recordFuelFill = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<FuelStatus> => {
     const trip = await resolveTrip(data.tripId);
     if (!trip) throw new Error("No trip found");
-    if (trip.owner_id !== context.userId) throw new Error("Only the trip owner can log fuel");
+    await assertTripOwner(await admin(), context.userId, trip.id);
     const fills = await fetchLog(trip.id);
     fills.push({
       ts: new Date().toISOString(),
@@ -221,7 +222,7 @@ export const undoLastFill = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<FuelStatus> => {
     const trip = await resolveTrip(data.tripId);
     if (!trip) throw new Error("No trip found");
-    if (trip.owner_id !== context.userId) throw new Error("Only the trip owner can edit fuel");
+    await assertTripOwner(await admin(), context.userId, trip.id);
     const fills = await fetchLog(trip.id);
     fills.pop();
     await writeLog(trip.id, fills);

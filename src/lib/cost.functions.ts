@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { computeEqualShares } from "./split-math";
 import { z } from "zod";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 
 export const COST_CATEGORIES = [
   "fuel", "accommodation", "ferry", "food", "activities", "tolls", "misc",
@@ -50,9 +51,11 @@ export const getFxRate = createServerFn({ method: "GET" })
 
 // ---------- Helpers ----------
 async function ensureOwner(supabase: any, userId: string, tripId: string) {
-  const { data: trip } = await supabase
-    .from("trips").select("owner_id").eq("id", tripId).single();
-  if (!trip || trip.owner_id !== userId) throw new Error("Forbidden");
+  // See trip-owner.server.ts: trips.owner_id is only one of three records of
+  // who the owner is, and on its own it locks the app owner out.
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  await assertTripOwner(supabaseAdmin, userId, tripId);
+  void supabase;
 }
 
 // `dayTravellers()` lived here: an unused helper that read the day roster via

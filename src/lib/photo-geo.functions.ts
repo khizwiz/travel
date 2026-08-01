@@ -4,6 +4,7 @@ import { z } from "zod";
 import { readExifMeta } from "@/lib/exif-gps";
 import { reverseGeocodeCore } from "@/lib/location.functions";
 import { coordsForDays, reconcileCoord } from "@/lib/day-coord";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 
 /**
  * Put the photos already in the bucket onto the map, where they were taken.
@@ -87,9 +88,7 @@ export const backfillPhotoGeo = createServerFn({ method: "POST" })
     const { data: trip } = await db
       .from("trips").select("id, owner_id").eq("slug", "eu-tripping-2026").maybeSingle();
     if (!trip) throw new Error("No trip found");
-    if ((trip as any).owner_id !== context.userId) {
-      throw new Error("Only the trip owner can do this");
-    }
+    await assertTripOwner(db, context.userId, (trip as any).id as string);
 
     const { data: days } = await db
       .from("itinerary_days").select("id, day_date").eq("trip_id", trip.id);

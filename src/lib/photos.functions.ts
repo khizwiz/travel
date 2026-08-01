@@ -3,6 +3,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { coordForDay, coordsForDays, dayDate, reconcileCoord } from "@/lib/day-coord";
 import { revgeoKey } from "@/lib/location.functions";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 
 // List all itinerary days for the default trip so admins can pick one when
 // posting a photo to the Story feed.
@@ -309,9 +310,7 @@ export const repinDestinationPhotos = createServerFn({ method: "POST" })
     const { data: trip } = await supabaseAdmin
       .from("trips").select("id, owner_id").eq("slug", "eu-tripping-2026").maybeSingle();
     if (!trip) throw new Error("No trip found");
-    if ((trip as any).owner_id !== context.userId) {
-      throw new Error("Only the trip owner can do this");
-    }
+    await assertTripOwner(supabaseAdmin, context.userId, (trip as any).id as string);
 
     const { data: days } = await supabaseAdmin
       .from("itinerary_days").select("id, day_date").eq("trip_id", trip.id);

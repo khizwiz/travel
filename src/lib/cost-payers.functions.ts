@@ -1,11 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { assertTripOwner } from "@/lib/trip-owner.server";
 
 async function ensureOwner(supabase: any, userId: string, tripId: string) {
-  const { data: trip } = await supabase
-    .from("trips").select("owner_id").eq("id", tripId).single();
-  if (!trip || trip.owner_id !== userId) throw new Error("Forbidden");
+  // See trip-owner.server.ts — trips.owner_id alone is not the owner test.
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  await assertTripOwner(supabaseAdmin, userId, tripId);
+  void supabase;
 }
 
 export const listCostPayers = createServerFn({ method: "GET" })
