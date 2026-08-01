@@ -82,13 +82,19 @@ function TrackingPage() {
     queryFn: () => fetchPhotos(),
     staleTime: 60_000,
   });
+  // Label a photo by where it was taken when that is known, since the point of
+  // the pin is the place. The caption is a fallback, and the day title — which
+  // reads "Re-routed: Rimini, Italy" — the last resort.
   const photoMarkers: PhotoMarker[] = (storyPhotos ?? [])
     .filter((p: any) => p.lat != null && p.lng != null && p.signedUrl)
     .map((p: any) => ({
       lat: p.lat,
       lng: p.lng,
       thumbUrl: p.signedUrl,
-      label: p.caption ?? p.itinerary_days?.title ?? undefined,
+      label:
+        [p.placeLabel, p.caption].filter(Boolean).join(" — ") ||
+        p.itinerary_days?.title ||
+        undefined,
     }));
 
   // The route actually driven, from the recorded GPS trail and snapped to

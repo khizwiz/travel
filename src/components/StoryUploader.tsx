@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { Camera, ImagePlus, Loader2, MapPin, Trash2, Upload } from "lucide-react";
+import { Camera, Compass, ImagePlus, Loader2, MapPin, Trash2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   createDestinationPhoto,
@@ -12,6 +12,7 @@ import { ensureTripScaffold } from "@/lib/scaffold.functions";
 import { prepareImageForUpload } from "@/lib/image-prep";
 import { readExifGps } from "@/lib/exif-gps";
 import { removeSamplePhotos, seedSamplePhotos } from "@/lib/seed-photos.functions";
+import { backfillPhotoGeo } from "@/lib/photo-geo.functions";
 import { formatDate, ITINERARY } from "@/lib/trip-data";
 import { useApp } from "@/lib/app-state";
 
@@ -30,6 +31,7 @@ export function StoryUploader() {
   const addSamples = useServerFn(seedSamplePhotos);
   const dropSamples = useServerFn(removeSamplePhotos);
   const repin = useServerFn(repinDestinationPhotos);
+  const backfill = useServerFn(backfillPhotoGeo);
   const { liveFix } = useApp();
   const qc = useQueryClient();
 
@@ -40,14 +42,45 @@ export function StoryUploader() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [sampling, setSampling] = useState<"add" | "remove" | "repin" | null>(null);
+  const [sampling, setSampling] = useState<"add" | "remove" | "repin" | "geo" | null>(null);
   const [sampleMsg, setSampleMsg] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  async function runSamples(which: "add" | "remove" | "repin") {
+  /**
+   * Reading locations opens each stored photo, so the server works in batches
+   * and says what is left. Keep going until it is done, showing progress —
+   * otherwise a large feed would need the button pressed a dozen times.
+   */
+  async function runGeoBackfill() {
+    let located = 0;
+    let fromDay = 0;
+    let scanned = 0;
+    for (let pass = 0; pass < 40; pass++) {
+      const r = await backfill({ data: {} });
+      scanned += r.scanned;
+      located += r.located;
+      fromDay += r.fellBackToDay;
+      setSampleMsg(
+        r.remaining
+          ? `Read ${scanned} photo${scanned === 1 ? "" : "s"}… ${r.remaining} to go.`
+          : `Done: ${located} placed from the photo's own data` +
+            (fromDay ? `, ${fromDay} from their day` : "") +
+            (scanned === 0 ? " — nothing needed reading." : "."),
+      );
+      if (!r.remaining || r.scanned === 0) break;
+    }
+  }
+
+  async function runSamples(which: "add" | "remove" | "repin" | "geo") {
     setSampling(which);
     setSampleMsg(null);
     try {
+      if (which === "geo") {
+        await runGeoBackfill();
+        qc.invalidateQueries({ queryKey: ["public-story-photos"] });
+        setSampling(null);
+        return;
+      }
       const r =
         which === "add"
           ? await addSamples({ data: {} })
@@ -285,6 +318,18 @@ export function StoryUploader() {
               <Trash2 className="h-3.5 w-3.5" />
             )}
             Remove samples
+          </button>
+          <button
+            onClick={() => runSamples("geo")}
+            disabled={sampling !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-60"
+          >
+            {sampling === "geo" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Compass className="h-3.5 w-3.5" />
+            )}
+            Read photo locations
           </button>
           <button
             onClick={() => runSamples("repin")}

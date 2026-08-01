@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { coordForDay, coordsForDays, dayDate } from "@/lib/day-coord";
+import { revgeoKey } from "@/lib/location.functions";
 
 // List all itinerary days for the default trip so admins can pick one when
 // posting a photo to the Story feed.
@@ -30,6 +31,12 @@ export interface StoryPhoto {
   lat: number | null;
   lng: number | null;
   signedUrl: string | null;
+  /**
+   * The place these coordinates fall in ("Rimini"), when it is already known.
+   * Read from the shared reverse-geocode cache rather than looked up per
+   * request — the owner's photo-location pass is what fills it.
+   */
+  placeLabel: string | null;
   /** Shape kept so the story timeline can group by day without a join. */
   itinerary_days: { day_date: string | null; title: string | null } | null;
 }
@@ -159,6 +166,35 @@ export const listPublicDestinationPhotos = createServerFn({ method: "GET" })
     const coarse = (v: unknown): number | null =>
       v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100;
 
+    // Place names for the markers, in one query.
+    //
+    // The reverse-geocode cache is keyed on coordinates rounded to ~1 km,
+    // which is exactly the rounding applied to a public photo — so the key a
+    // photo needs is the key the owner's location pass already wrote. No
+    // network call happens here; an unnamed photo simply has no label.
+    const keys = Array.from(
+      new Set(
+        shown
+          .map((r) => {
+            const la = coarse(r.lat);
+            const ln = coarse(r.lng);
+            return la != null && ln != null ? revgeoKey(la, ln) : null;
+          })
+          .filter((k): k is string => k !== null),
+      ),
+    );
+    const placeByKey = new Map<string, string>();
+    if (keys.length) {
+      const { data: cached } = await supabaseAdmin
+        .from("app_config")
+        .select("key, value")
+        .in("key", keys);
+      for (const row of cached ?? []) {
+        const label = ((row as any).value?.v as { label?: string } | undefined)?.label;
+        if (label) placeByKey.set((row as any).key as string, label);
+      }
+    }
+
     // Counts per stage, so an empty feed says which step emptied it instead of
     // being indistinguishable from "no photos have been posted".
     const signed = shown.filter((r) => urlFor.get(r.storage_path as string)).length;
@@ -169,14 +205,18 @@ export const listPublicDestinationPhotos = createServerFn({ method: "GET" })
 
     return shown.map((r) => {
       const day = dayById.get(r.day_id as string);
+      const la = coarse(r.lat);
+      const ln = coarse(r.lng);
       return {
         id: r.id as string,
         post_id: (r.post_id as string) ?? null,
         caption: (r.caption as string) ?? null,
         is_cover: Boolean(r.is_cover),
         created_at: r.created_at as string,
-        lat: coarse(r.lat),
-        lng: coarse(r.lng),
+        lat: la,
+        lng: ln,
+        placeLabel:
+          la != null && ln != null ? (placeByKey.get(revgeoKey(la, ln)) ?? null) : null,
         signedUrl: urlFor.get(r.storage_path as string) ?? null,
         itinerary_days: day
           ? { day_date: (day.day_date as string) ?? null, title: (day.title as string) ?? null }

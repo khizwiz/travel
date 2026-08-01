@@ -109,46 +109,60 @@ const reverseInput = z.object({
  * keeps the cache useful while driving and avoids writing an exact position
  * into app_config as a key.
  */
+/** The cache key a coordinate resolves under, rounded to ~1 km. */
+export function revgeoKey(lat: number, lng: number): string {
+  return `revgeo:${Math.round(lat * 100) / 100},${Math.round(lng * 100) / 100}`;
+}
+
+/**
+ * Plain-function core, so server code other than the endpoint can name a
+ * place — the photo geo backfill warms this same cache, which is what lets the
+ * story feed label markers without a lookup per photo per request.
+ */
+export async function reverseGeocodeCore(lat: number, lng: number): Promise<PlaceName | null> {
+  const rLat = Math.round(lat * 100) / 100;
+  const rLng = Math.round(lng * 100) / 100;
+  const key = revgeoKey(lat, lng);
+
+  const cached = await cacheRead<PlaceName>(key, GEOCODE_TTL_MS);
+  if (cached) return cached;
+
+  const url =
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&addressdetails=1` +
+    `&lat=${encodeURIComponent(rLat)}&lon=${encodeURIComponent(rLng)}`;
+  const res = await fetchWithRetry(url);
+  if (!res?.ok) return null;
+
+  try {
+    const json = (await res.json()) as {
+      address?: Record<string, string>;
+      name?: string;
+    };
+    const a = json.address ?? {};
+    const label =
+      a.city ??
+      a.town ??
+      a.village ??
+      a.municipality ??
+      a.county ??
+      a.state ??
+      json.name ??
+      "";
+    if (!label) return null;
+    const place: PlaceName = { label, country: a.country, source: "osm" };
+    await cacheWrite(key, place);
+    return place;
+  } catch (e) {
+    console.error("[location] reverse geocode parse failed", e);
+    return null;
+  }
+}
+
 export const reverseGeocode = createServerFn({ method: "GET" })
   .middleware([requireCapability("location.viewPrecise")])
   .inputValidator((d: unknown) => reverseInput.parse(d))
   .handler(async ({ data }): Promise<PlaceName | null> => {
-    const rLat = Math.round(data.lat * 100) / 100;
-    const rLng = Math.round(data.lng * 100) / 100;
-    const key = `revgeo:${rLat},${rLng}`;
-
-    const cached = await cacheRead<PlaceName>(key, GEOCODE_TTL_MS);
-    if (cached) return cached;
-
-    const url =
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&addressdetails=1` +
-      `&lat=${encodeURIComponent(rLat)}&lon=${encodeURIComponent(rLng)}`;
-    const res = await fetchWithRetry(url);
-    if (!res?.ok) return null;
-
-    try {
-      const json = (await res.json()) as {
-        address?: Record<string, string>;
-        name?: string;
-      };
-      const a = json.address ?? {};
-      const label =
-        a.city ??
-        a.town ??
-        a.village ??
-        a.municipality ??
-        a.county ??
-        a.state ??
-        json.name ??
-        "";
-      if (!label) return null;
-      const place: PlaceName = { label, country: a.country, source: "osm" };
-      await cacheWrite(key, place);
-      return place;
-    } catch (e) {
-      console.error("[location] reverse geocode parse failed", e);
-      return null;
-    }
+    return reverseGeocodeCore(data.lat, data.lng);
   });
 
 // ---------------------------------------------------------------------------
