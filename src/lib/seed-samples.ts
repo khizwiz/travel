@@ -96,10 +96,19 @@ export async function seedSamples(
     .select("starts_on, ends_on")
     .eq("id", tripId)
     .maybeSingle();
+  // Same generous margin as the booking importer, and for the same reason: the
+  // recorded start has proved to be later than the journey actually began, so
+  // an exact bound would hide real early days. A month is plenty to exclude a
+  // stray year while keeping everything genuine.
   const startsOn = (tripRow as any)?.starts_on as string | undefined;
+  const floor = startsOn
+    ? new Date(new Date(startsOn + "T00:00:00Z").getTime() - 30 * 86400000)
+        .toISOString()
+        .slice(0, 10)
+    : undefined;
   const today = new Date().toISOString().slice(0, 10);
-  const inWindow = startsOn
-    ? allDays.filter((d: any) => typeof d.day_date === "string" && d.day_date >= startsOn)
+  const inWindow = floor
+    ? allDays.filter((d: any) => typeof d.day_date === "string" && d.day_date >= floor)
     : allDays;
 
   const { chosen, dropped } = selectVisitedDays(inWindow, today, want);

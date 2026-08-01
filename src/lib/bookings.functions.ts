@@ -220,14 +220,27 @@ export const decideBookingUpload = createServerFn({ method: "POST" })
         new Date(new Date(iso + "T00:00:00Z").getTime() + by * 86400000)
           .toISOString()
           .slice(0, 10);
-      // A day either side, for a ferry that boards the night before.
-      const lo = tripWindow?.starts_on ? shiftDays(tripWindow.starts_on as string, -1) : null;
-      const hi = tripWindow?.ends_on ? shiftDays(tripWindow.ends_on as string, 1) : null;
+
+      // A generous margin, on purpose.
+      //
+      // This exists to catch a misread *year* — an error of years, which is
+      // what put a booking in 2020. It must not double as enforcement of the
+      // exact itinerary bounds, because those are not reliable: the recorded
+      // start has already proved to be two days later than the journey really
+      // began, and a tight window would have refused a genuine booking from
+      // the first morning. A month either side separates "wrong year" from
+      // "the plan moved" without ever blocking a plausible document.
+      const MARGIN_DAYS = 30;
+      const lo = tripWindow?.starts_on
+        ? shiftDays(tripWindow.starts_on as string, -MARGIN_DAYS)
+        : null;
+      const hi = tripWindow?.ends_on ? shiftDays(tripWindow.ends_on as string, MARGIN_DAYS) : null;
       if (rawDate && lo && hi && (rawDate < lo || rawDate > hi)) {
         throw new Error(
-          `The date read from this booking (${rawDate}) is outside the trip ` +
-            `(${tripWindow!.starts_on} to ${tripWindow!.ends_on}). Nothing was changed. ` +
-            `Check the document's year, or set the date by hand.`,
+          `The date read from this booking (${rawDate}) is nowhere near the trip ` +
+            `(${tripWindow!.starts_on} to ${tripWindow!.ends_on}) — most likely the ` +
+            `document did not state a year. Nothing was changed. Check the year, or ` +
+            `set the date by hand.`,
         );
       }
 
