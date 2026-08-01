@@ -87,8 +87,22 @@ export async function seedSamples(
     return { created: 0, skipped: 0, days: [], message: "No itinerary days to attach photos to." };
   }
 
+  // Clamp to the trip's own window as well as to today. A bad booking import
+  // can leave an itinerary day years outside the trip (a misread year on a
+  // hotel confirmation put one in 2020), and "before today" happily includes
+  // 2020 — which is how a sample photo turned up under a 2020 heading.
+  const { data: tripRow } = await db
+    .from("trips")
+    .select("starts_on, ends_on")
+    .eq("id", tripId)
+    .maybeSingle();
+  const startsOn = (tripRow as any)?.starts_on as string | undefined;
   const today = new Date().toISOString().slice(0, 10);
-  const { chosen, dropped } = selectVisitedDays(allDays, today, want);
+  const inWindow = startsOn
+    ? allDays.filter((d: any) => typeof d.day_date === "string" && d.day_date >= startsOn)
+    : allDays;
+
+  const { chosen, dropped } = selectVisitedDays(inWindow, today, want);
   if (!chosen.length) {
     return {
       created: 0,

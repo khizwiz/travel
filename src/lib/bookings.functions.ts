@@ -36,13 +36,34 @@ export const extractBooking = createServerFn({ method: "POST" })
       throw new Error("Provide booking text or an image.");
     }
 
+    // Tell the model when the trip is.
+    //
+    // Booking documents routinely print "23 Jul" or "23/07" with no year, and
+    // a model with no anchor invents one — which is how a hotel confirmation
+    // became an itinerary day in 2020, four years outside the trip, where it
+    // changed nothing and quietly looked like the import had failed.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: tripDates } = await supabaseAdmin
+      .from("trips")
+      .select("starts_on, ends_on")
+      .eq("slug", "eu-tripping-2026")
+      .maybeSingle();
+    const window =
+      tripDates?.starts_on && tripDates?.ends_on
+        ? `The trip runs ${tripDates.starts_on} to ${tripDates.ends_on}. Every date in this ` +
+          `document falls in that range: if the document omits the year, or gives a ` +
+          `day and month only, resolve it inside that range. Never emit a year ` +
+          `outside it.`
+        : "";
+
     const userContent: any[] = [
       {
         type: "text",
         text:
           "Extract the booking details from the following content. " +
           "Return ONLY the structured tool call. If a field is unknown, omit it. " +
-          "Dates must be ISO 8601 (YYYY-MM-DD or full datetime).",
+          "Dates must be ISO 8601 (YYYY-MM-DD or full datetime). " +
+          window,
       },
     ];
     if (data.text) {
@@ -184,6 +205,32 @@ export const decideBookingUpload = createServerFn({ method: "POST" })
         notes?: string;
       };
       const rawDate = (parsed.check_in ?? parsed.check_out ?? "").slice(0, 10);
+
+      // A well-formed date is not necessarily a believable one. This only
+      // checked the shape, so a misread year sailed through and created an
+      // itinerary day far outside the trip: the booking appeared to import
+      // cleanly while changing nothing anyone would ever see. Refuse instead,
+      // and say what was read, so it can be corrected rather than lost.
+      const { data: tripWindow } = await supabase
+        .from("trips")
+        .select("starts_on, ends_on")
+        .eq("id", upload.trip_id)
+        .maybeSingle();
+      const shiftDays = (iso: string, by: number) =>
+        new Date(new Date(iso + "T00:00:00Z").getTime() + by * 86400000)
+          .toISOString()
+          .slice(0, 10);
+      // A day either side, for a ferry that boards the night before.
+      const lo = tripWindow?.starts_on ? shiftDays(tripWindow.starts_on as string, -1) : null;
+      const hi = tripWindow?.ends_on ? shiftDays(tripWindow.ends_on as string, 1) : null;
+      if (rawDate && lo && hi && (rawDate < lo || rawDate > hi)) {
+        throw new Error(
+          `The date read from this booking (${rawDate}) is outside the trip ` +
+            `(${tripWindow!.starts_on} to ${tripWindow!.ends_on}). Nothing was changed. ` +
+            `Check the document's year, or set the date by hand.`,
+        );
+      }
+
       if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
         // Find or create the itinerary day.
         const { data: existingDay } = await supabase
